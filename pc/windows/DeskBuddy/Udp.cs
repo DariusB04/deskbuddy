@@ -83,3 +83,69 @@ sealed class UdpSender : IDisposable
 
     public void Dispose() => client.Dispose();
 }
+
+/// Hook-urile Claude Code rulează ca procese scurte, separate. Dacă aplicația din tray e pornită, îi dau ei pachetul
+/// (UDP pe 127.0.0.1:4211), iar ea îl trimite pe unde e placa: USB sau WiFi. Altfel îl trimit direct pe WiFi, ca înainte.
+static class Relay
+{
+    public const int Port = 4211;
+    const string ReadyName = @"Local\DeskBuddyRelay";       // există cât timp aplicația ascultă pe portul de mai sus
+
+    public static void Send(byte[] data)
+    {
+        if (AppListening())
+        {
+            try
+            {
+                using var c = new UdpClient();
+                c.Send(data, data.Length, new IPEndPoint(IPAddress.Loopback, Port));
+                return;
+            }
+            catch (SocketException) { }
+        }
+        UdpSender.SendOnce(data);
+    }
+
+    static bool AppListening()
+    {
+        try
+        {
+            if (!System.Threading.EventWaitHandleAcl.TryOpenExisting(ReadyName, System.Security.AccessControl.EventWaitHandleRights.Synchronize, out var h)) return false;
+            h.Dispose();
+            return true;
+        }
+        catch (UnauthorizedAccessException) { return true; }
+    }
+
+    /// aplicația: ascultă pe 127.0.0.1:4211 și dă mai departe fiecare pachet; null dacă portul e ocupat
+    public static IDisposable? Listen(Action<byte[]> forward)
+    {
+        UdpClient client;
+        try { client = new UdpClient(new IPEndPoint(IPAddress.Loopback, Port)); }
+        catch (SocketException) { return null; }
+        var everyone = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.WorldSid, null);
+        var sec = new System.Security.AccessControl.EventWaitHandleSecurity();
+        sec.AddAccessRule(new System.Security.AccessControl.EventWaitHandleAccessRule(everyone,
+            System.Security.AccessControl.EventWaitHandleRights.Synchronize, System.Security.AccessControl.AccessControlType.Allow));
+        var ready = System.Threading.EventWaitHandleAcl.Create(false, EventResetMode.ManualReset, ReadyName, out _, sec);
+        var t = new Thread(() =>
+        {
+            var from = new IPEndPoint(IPAddress.Any, 0);
+            while (true)
+            {
+                byte[] d;
+                try { d = client.Receive(ref from); }
+                catch (SocketException) { continue; }        // ex. ICMP „port inaccesibil” de la un pachet trimis
+                catch (ObjectDisposedException) { return; }
+                if (d.Length is > 0 and <= UdpSender.MaxPacket) forward(d);
+            }
+        }) { IsBackground = true, Name = "relay" };
+        t.Start();
+        return new Listener(client, ready);
+    }
+
+    sealed class Listener(UdpClient client, EventWaitHandle ready) : IDisposable
+    {
+        public void Dispose() { ready.Dispose(); client.Dispose(); }
+    }
+}

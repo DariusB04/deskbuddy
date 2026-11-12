@@ -5,6 +5,10 @@ using System.Text.Json.Serialization;
 
 namespace DeskBuddy;
 
+/// Auto = USB dacă placa e conectată prin cablu la PC, altfel WiFi
+[JsonConverter(typeof(JsonStringEnumConverter<LinkMode>))]
+enum LinkMode { Auto, Usb, Wifi }
+
 /// Setările aplicației (nu ale plăcii: acelea stau pe DeskBuddy, în NVS). %LOCALAPPDATA%\DeskBuddy\settings.json
 sealed class AppSettings
 {
@@ -14,6 +18,7 @@ sealed class AppSettings
     public bool AutoUpdateCheck { get; set; } = true;    // verifică GitHub Releases la pornire și o dată pe zi
     public string FirmwareRepo { get; set; } = "";       // opțional: repo privat cu firmware-ul plăcii (owner/nume)
     public string FirmwareTokenProtected { get; set; } = "";   // token-ul pentru el, criptat cu DPAPI (doar userul ăsta, pe PC-ul ăsta)
+    public LinkMode Link { get; set; } = LinkMode.Auto;  // pe unde pleacă datele spre placă
 
     [JsonIgnore]
     public string? FirmwareToken

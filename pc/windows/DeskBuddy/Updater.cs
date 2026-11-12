@@ -6,8 +6,9 @@ using System.Text.Json;
 
 namespace DeskBuddy;
 
-/// Ultimul release de pe GitHub: aplicația (DeskBuddy-Windows.zip) și firmware-ul plăcii (DeskBuddy.ino.bin).
-sealed record ReleaseInfo(Version Version, string Tag, string PageUrl, Asset? App, Asset? Firmware);
+/// Ultimul release de pe GitHub: aplicația (DeskBuddy-Windows.zip), firmware-ul plăcii (DeskBuddy.ino.bin, pentru WiFi)
+/// și imaginea completă pentru USB (DeskBuddy-flash.bin: bootloader + partiții + firmware, de la adresa 0x0).
+sealed record ReleaseInfo(Version Version, string Tag, string PageUrl, Asset? App, Asset? Firmware, Asset? Flash);
 
 /// Url = link-ul public de descărcare; ApiUrl = același fișier prin API (merge și pe repo privat, cu token)
 sealed record Asset(string Url, string ApiUrl, long Size, string? Sha256);
@@ -17,6 +18,7 @@ static class Updater
 {
     public const string AppAsset = "DeskBuddy-Windows.zip";
     public const string FirmwareAsset = "DeskBuddy.ino.bin";
+    public const string FlashAsset = "DeskBuddy-flash.bin";
 
     static readonly HttpClient Http = CreateClient();
 
@@ -65,7 +67,7 @@ static class Updater
         var root = doc.RootElement;
         string tag = root.GetProperty("tag_name").GetString() ?? "";
         if (ParseVersion(tag) is not Version v) return null;
-        Asset? app = null, fw = null;
+        Asset? app = null, fw = null, flash = null;
         foreach (var a in root.GetProperty("assets").EnumerateArray())
         {
             string name = a.GetProperty("name").GetString() ?? "";
@@ -74,8 +76,9 @@ static class Updater
                                   digest is { } s && s.StartsWith("sha256:", StringComparison.Ordinal) ? s[7..] : null);
             if (name == AppAsset) app = asset;
             else if (name == FirmwareAsset) fw = asset;
+            else if (name == FlashAsset) flash = asset;
         }
-        return new ReleaseInfo(v, tag, root.GetProperty("html_url").GetString() ?? "", app, fw);
+        return new ReleaseInfo(v, tag, root.GetProperty("html_url").GetString() ?? "", app, fw, flash);
     }
 
     /// Descarcă și verifică mărimea și SHA-256 (dacă GitHub îl dă).

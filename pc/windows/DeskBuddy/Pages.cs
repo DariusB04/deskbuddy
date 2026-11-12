@@ -67,6 +67,21 @@ sealed class PcPage : Page
     readonly Label hostError = Theme.Label("", Theme.Small, Theme.Bad);
     readonly Label tempState = Theme.Label("");
     readonly Button tempFix = Theme.Button("", primary: true);
+    readonly ComboBox link = Theme.Combo(330);
+    readonly Card wifiCard;
+    readonly Label wifiState = Theme.Label("");
+    readonly ComboBox wifiSsid = Theme.Combo(260);
+    readonly TextBox wifiPass = Theme.TextBox();
+    readonly Button wifiScan = Theme.Button("Caută rețele");
+    readonly Button wifiSave = Theme.Button("Salvează pe placă", primary: true);
+    readonly Label wifiInfo = Note("");
+    bool wifiBusy;
+    static readonly (LinkMode Mode, string Text)[] LinkModes =
+    [
+        (LinkMode.Auto, "Auto: USB dacă e conectată prin cablu, altfel WiFi"),
+        (LinkMode.Usb, "Doar USB"),
+        (LinkMode.Wifi, "Doar WiFi"),
+    ];
 
     public PcPage(TrayApp app) : base("PC", "Ce trimite PC-ul la DeskBuddy, o dată pe secundă (ecranul PC de pe placă).")
     {
@@ -75,8 +90,18 @@ sealed class PcPage : Page
         now.Controls.AddRange([cpu, gpu, ram]);
 
         var conn = AddCard("Conexiune");
+        foreach (var (_, text) in LinkModes) link.Items.Add(text);
+        link.SelectedIndex = Math.Max(0, Array.FindIndex(LinkModes, m => m.Mode == app.Settings.Link));
+        link.SelectedIndexChanged += (_, _) =>
+        {
+            app.SetLinkMode(LinkModes[link.SelectedIndex].Mode);
+            RefreshData();
+        };
+        conn.Controls.Add(link);
         conn.Controls.Add(device);
         conn.Controls.Add(targets);
+        conn.Controls.Add(Note("Pe USB merg ecranele PC, CLAUDE și CEAS (ora vine de la PC) și fără WiFi; VREME și IMPRIMANTA cer WiFi. " +
+                               "Cât timp aplicația folosește portul USB, Serial Monitor din Arduino nu se poate conecta: alege „Doar WiFi”."));
         conn.Controls.Add(Note("IP-ul plăcii: gol = broadcast pe toate rețelele PC-ului și căutare automată (deskbuddy.local). " +
                                "Scrie-l doar dacă routerul blochează broadcast-ul. Îl vezi pe ecranul PC al plăcii."));
         host.Width = 220;
@@ -97,6 +122,51 @@ sealed class PcPage : Page
         hostError.Visible = false;
         conn.Controls.Add(hostError);
 
+        wifiCard = AddCard("WiFi-ul plăcii (prin USB)");
+        wifiCard.Controls.Add(wifiState);
+        wifiCard.Controls.Add(Note("Placa e legată prin cablu, deci îi poți da WiFi-ul de aici, fără telefon. Parola pleacă doar pe cablu, la placă."));
+        wifiSsid.DropDownStyle = ComboBoxStyle.DropDown;     // se poate scrie și o rețea ascunsă
+        wifiPass.Width = 200;
+        wifiPass.UseSystemPasswordChar = true;
+        wifiPass.PlaceholderText = "parola WiFi";
+        int wpad = Math.Max(0, (wifiSave.GetPreferredSize(Size.Empty).Height - wifiPass.PreferredHeight) / 2);
+        wifiPass.Margin = new Padding(0, wifiSave.Margin.Top + wpad, 8, 0);
+        wifiCard.Controls.Add(Theme.Row(wifiSsid, wifiScan));
+        wifiCard.Controls.Add(Theme.Row(wifiPass, wifiSave));
+        wifiCard.Controls.Add(wifiInfo);
+        wifiCard.Visible = false;
+        wifiScan.Click += async (_, _) =>
+        {
+            if (wifiBusy) return;
+            wifiBusy = true;
+            wifiScan.Enabled = false;
+            wifiInfo.Text = "Placa caută rețele (câteva secunde)...";
+            wifiInfo.ForeColor = Theme.Muted;
+            var nets = await app.UsbScanWifiAsync();
+            wifiBusy = false;
+            wifiScan.Enabled = true;
+            if (IsDisposed) return;
+            if (nets == null) { wifiInfo.Text = "Placa n-a răspuns. E conectată prin USB?"; wifiInfo.ForeColor = Theme.Bad; return; }
+            string keep = wifiSsid.Text;
+            wifiSsid.Items.Clear();
+            foreach (var n in nets) wifiSsid.Items.Add(n.Ssid);
+            wifiSsid.Text = keep.Length > 0 ? keep : nets.FirstOrDefault().Ssid ?? "";
+            wifiInfo.Text = nets.Count == 0 ? "Nicio rețea găsită (placa vede doar 2.4 GHz)." :
+                string.Join(" · ", nets.Take(6).Select(n => $"{n.Ssid} {Bars(n.Rssi)}{(n.Locked ? "" : " (deschisă)")}"));
+        };
+        wifiSave.Click += async (_, _) =>
+        {
+            string ssid = wifiSsid.Text.Trim();
+            if (ssid.Length == 0) { wifiInfo.Text = "Alege rețeaua."; wifiInfo.ForeColor = Theme.Bad; return; }
+            wifiSave.Enabled = false;
+            bool ok = await app.UsbSaveWifiAsync(ssid, wifiPass.Text);
+            wifiSave.Enabled = true;
+            if (IsDisposed) return;
+            wifiPass.Text = "";
+            wifiInfo.Text = ok ? $"Salvat. Placa repornește și se conectează la {ssid} (~10 s)." : "Placa n-a confirmat. E conectată prin USB?";
+            wifiInfo.ForeColor = ok ? Theme.Accent : Theme.Bad;
+        };
+
         var temp = AddCard("Temperatura CPU");
         temp.Controls.Add(tempState);
         temp.Controls.Add(tempFix);
@@ -106,6 +176,8 @@ sealed class PcPage : Page
             else Open("https://pawnio.eu/");
         };
     }
+
+    static string Bars(int rssi) => rssi > -60 ? "▂▄▆█" : rssi > -70 ? "▂▄▆" : rssi > -80 ? "▂▄" : "▂";
 
     public override void RefreshData()
     {
@@ -126,9 +198,42 @@ sealed class PcPage : Page
             ram.Set(used + P(s.RamL), s.RamL, Theme.Accent);
         }
 
-        device.Text = app.Device is { } ip ? $"DeskBuddy: {ip}" : "DeskBuddy negăsit (trimit oricum broadcast)";
-        device.ForeColor = app.Device != null ? Theme.Accent : Theme.Warn;
-        targets.Text = "Trimit la: " + (app.Targets.Count > 0 ? string.Join(", ", app.Targets) : "...") + $"  (UDP {UdpSender.Port})";
+        var mode = app.Settings.Link;
+        wifiCard.Visible = app.UsbBoard != null;
+        if (app.UsbBoard is { } wb)
+        {
+            if (wb.Wifi) { wifiState.Text = $"Conectată la {wb.Ssid}" + (wb.Ip != null ? $" ({wb.Ip})" : ""); wifiState.ForeColor = Theme.Accent; }
+            else if (wb.Ssid.Length == 0) { wifiState.Text = "Nicio rețea WiFi salvată pe placă."; wifiState.ForeColor = Theme.Warn; }
+            else
+            {
+                wifiState.Text = $"Rețeaua salvată: {wb.Ssid}, dar placa nu se conectează" + wb.WifiStatus switch
+                {
+                    1 => " (n-o vede: e prea departe sau e doar 5 GHz?).",
+                    4 => " (conectarea a eșuat: parola greșită?).",
+                    _ => ".",
+                };
+                wifiState.ForeColor = Theme.Warn;
+            }
+            if (wifiSsid.Text.Length == 0 && wb.Ssid.Length > 0) wifiSsid.Text = wb.Ssid;
+        }
+        if (app.SendingOverUsb && app.UsbBoard is { } ub)
+        {
+            device.Text = $"DeskBuddy pe USB: {ub.Port} · firmware {ub.Version}" + (ub.Ip != null ? $" · WiFi {ub.Ip}" : " · fără WiFi");
+            device.ForeColor = Theme.Accent;
+            targets.Text = "Trimit prin cablul USB.";
+        }
+        else if (mode == LinkMode.Usb)
+        {
+            device.Text = "DeskBuddy negăsit pe USB";
+            device.ForeColor = Theme.Warn;
+            targets.Text = "Conectează placa prin cablu (firmware 1.2.0 sau mai nou). Pe WiFi nu trimit nimic în modul ăsta.";
+        }
+        else
+        {
+            device.Text = app.Device is { } ip ? $"DeskBuddy: {ip}" : "DeskBuddy negăsit (trimit oricum broadcast)";
+            device.ForeColor = app.Device != null ? Theme.Accent : Theme.Warn;
+            targets.Text = "Trimit pe WiFi la: " + (app.Targets.Count > 0 ? string.Join(", ", app.Targets) : "...") + $"  (UDP {UdpSender.Port})";
+        }
 
         if (s != null && s.CpuT != null)
         {
@@ -285,6 +390,16 @@ sealed class AppPage : Page
     readonly TextBox privRepo = Theme.TextBox();
     readonly TextBox privToken = Theme.TextBox();
     readonly Label privInfo = Note("");
+    readonly ComboBox usbPort = Theme.Combo(200);
+    readonly CheckBox usbErase = Theme.Check("Instalare completă: șterge și setările plăcii (WiFi, imprimantă, parolă)");
+    readonly Button usbFlash = Theme.Button("Scrie firmware-ul din release", primary: true);
+    readonly Button usbFile = Theme.Button("Din fișier...");
+    readonly Button usbScan = Theme.Button("Caută din nou");
+    readonly Label usbInfo = Note("");
+    readonly Label usbStatus = Note("");
+    readonly Button usbDriver = Theme.Button("", primary: true);
+    (string? Chip, string? DriverUrl) missingDriver;
+    List<UsbLink.PortInfo> ports = [];
     bool updating, busy;
 
     public AppPage(TrayApp app) : base("Aplicație", "Cum pornește, unde stă și cum se actualizează DeskBuddy.")
@@ -323,6 +438,28 @@ sealed class AppPage : Page
             });
         };
         autoCheck.CheckedChanged += (_, _) => { if (!updating) { app.Settings.AutoUpdateCheck = autoCheck.Checked; app.Settings.Save(); } };
+
+        var usbCard = AddCard("Firmware prin USB");
+        usbCard.Controls.Add(Note("Pentru o placă nouă (prima instalare) sau una fără WiFi. Leagă placa de PC cu un cablu USB de date. " +
+                                  "Aplicația o pune singură în modul de programare; dacă nu reușește, ține apăsat butonul BOOT de pe placă."));
+        usbCard.Controls.Add(Theme.Row(usbPort, usbScan, usbDriver));
+        usbDriver.Visible = false;
+        usbDriver.Click += (_, _) => { if (missingDriver.DriverUrl is { } u) Open(u); };
+        usbCard.Controls.Add(usbErase);
+        usbCard.Controls.Add(Theme.Row(usbFlash, usbFile));
+        usbCard.Controls.Add(usbInfo);
+        usbCard.Controls.Add(usbStatus);
+        usbScan.Click += (_, _) => RefreshPorts();
+        usbFlash.Click += async (_, _) => await FlashUsb(null);
+        usbFile.Click += async (_, _) =>
+        {
+            using var dlg = new OpenFileDialog
+            {
+                Title = "Alege firmware-ul",
+                Filter = "Firmware ESP32 (*.bin)|*.bin|Toate fișierele|*.*",
+            };
+            if (dlg.ShowDialog(FindForm()) == DialogResult.OK) await FlashUsb(dlg.FileName);
+        };
 
         var priv = AddCard("Firmware din repo privat (opțional)");
         priv.Controls.Add(Note("Dacă placa ta rulează un firmware compilat dintr-un repo GitHub privat, aplicația îl poate actualiza de acolo. " +
@@ -381,6 +518,75 @@ sealed class AppPage : Page
         info.Controls.Add(Theme.Row(folder, exit));
     }
 
+    void RefreshPorts()
+    {
+        string? keep = usbPort.SelectedIndex >= 0 && usbPort.SelectedIndex < ports.Count ? ports[usbPort.SelectedIndex].Name : null;
+        ports = TrayApp.UsbPorts();
+        usbPort.Items.Clear();
+        foreach (var p in ports)
+            usbPort.Items.Add(app.UsbBoard?.Port == p.Name ? $"{p} · DeskBuddy {app.UsbBoard.Version}" : p.ToString());
+        if (ports.Count == 0)
+        {
+            usbPort.Items.Add("nicio placă pe USB");
+            usbPort.SelectedIndex = 0;
+            missingDriver = UsbLink.MissingDrivers().FirstOrDefault();
+        }
+        else missingDriver = default;
+        usbDriver.Visible = missingDriver.Chip != null;
+        if (missingDriver.Chip != null) usbDriver.Text = $"Descarcă driverul {missingDriver.Chip}";
+        else
+        {
+            int i = ports.FindIndex(p => p.Name == (keep ?? app.UsbBoard?.Port));
+            usbPort.SelectedIndex = Math.Max(0, i);
+        }
+        RefreshUsb();
+    }
+
+    void RefreshUsb()
+    {
+        bool hasPort = ports.Count > 0;
+        usbFlash.Enabled = usbFile.Enabled = usbPort.Enabled = usbErase.Enabled = !busy && hasPort;
+        usbScan.Enabled = !busy;
+        var rel = app.FirmwareRelease;
+        string source = app.UsePrivateFirmware ? "repo-ul privat" : "release-ul public";
+        if (missingDriver.Chip != null)
+        {
+            usbInfo.Text = $"Placa e conectată, dar Windows n-are driverul pentru cipul ei USB ({missingDriver.Chip}), deci nu apare niciun port COM. " +
+                           "Instalează driverul, apoi apasă „Caută din nou”.";
+            usbInfo.ForeColor = Theme.Warn;
+        }
+        else if (app.PrivateFirmwareMissing) { usbInfo.Text = "Firmware-ul plăcii vine din repo-ul privat: completează-l în cardul de mai jos. Sau alege un .bin cu „Din fișier...”."; usbInfo.ForeColor = Theme.Warn; }
+        else if (rel?.Flash != null) { usbInfo.Text = $"Din release: firmware {rel.Version.ToString(3)} din {source}."; usbInfo.ForeColor = Theme.Muted; }
+        else { usbInfo.Text = "Încă nu știu ultimul release: apasă „Verifică acum” sau alege un .bin cu „Din fișier...”."; usbInfo.ForeColor = Theme.Muted; }
+        usbFlash.Enabled &= rel?.Flash != null;
+    }
+
+    async Task FlashUsb(string? file)
+    {
+        if (busy || ports.Count == 0) return;
+        var port = ports[Math.Clamp(usbPort.SelectedIndex, 0, ports.Count - 1)];
+        bool full = usbErase.Checked;
+        string what = file != null ? Path.GetFileName(file) : $"firmware-ul {app.FirmwareRelease?.Version.ToString(3)}";
+        string keep = full ? "Se șterg și setările plăcii (WiFi, imprimantă, parolă): după aceea pornește în SETUP."
+                           : "Setările plăcii rămân.";
+        if (MessageBox.Show(FindForm(), $"Scriu {what} pe placa de pe {port.Name}? {keep}\nNu scoate cablul cât durează (~30 s).",
+                "DeskBuddy", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+        busy = true;
+        RefreshUsb();
+        usbStatus.ForeColor = Theme.Muted;
+        var progress = new Progress<string>(s => usbStatus.Text = s);
+        string result;
+        try { result = await app.FlashUsbAsync(port.Name, full ? TrayApp.UsbFlashKind.Full : TrayApp.UsbFlashKind.KeepSettings, file, progress); }
+        catch (Exception e) { result = "Eroare: " + e.Message; }
+        busy = false;
+        if (IsDisposed) return;
+        usbStatus.Text = result;
+        usbStatus.ForeColor = result.StartsWith("Gata") ? Theme.Accent : Theme.Bad;
+        usbErase.Checked = false;
+        RefreshPorts();
+        RefreshData();
+    }
+
     async Task Busy(string text, Func<Task<string?>> work)
     {
         if (busy) return;
@@ -416,9 +622,9 @@ sealed class AppPage : Page
         var fwRel = app.FirmwareRelease;
         string board = app.BoardVersion switch
         {
-            null => app.Device == null ? "negăsită în rețea" : "nu răspunde",
+            null => app.Device == null ? "negăsită în rețea sau pe USB" : "nu răspunde",
             "" => "firmware vechi (fără număr de versiune)",
-            var v => "firmware " + v + (app.Board?.Variant == "full" ? " (din repo-ul privat)" : ""),
+            var v => "firmware " + v + (app.Board?.Variant == "full" ? " (din repo-ul privat)" : "") + (app.BoardViaUsb ? ", pe USB" : ""),
         };
         string fwState = app.FirmwareUpdateAvailable ? $"  →  {fwRel!.Version.ToString(3)} disponibil"
             : app.PrivateFirmwareMissing && app.Board?.Variant == "full" ? "  (update-urile vin din repo-ul privat: completează-l mai jos)"
@@ -427,7 +633,8 @@ sealed class AppPage : Page
         boardVersion.ForeColor = app.FirmwareUpdateAvailable ? Theme.Accent : Theme.Fg;
 
         updateApp.Visible = app.AppUpdateAvailable;
-        updateBoard.Visible = app.FirmwareUpdateAvailable;
+        updateBoard.Visible = app.FirmwareUpdateAvailable && app.DeviceUrl != null;     // prin WiFi; fără WiFi: cardul USB
+        if (!busy) RefreshUsb();
         notes.Visible = rel != null;
         checkNow.Enabled = updateApp.Enabled = updateBoard.Enabled = !busy && (Updater.Repo != null || app.Settings.HasPrivateFirmware);
         if (!busy && updateStatus.Text.Length == 0 && app.LastUpdateCheck is DateTime t)
@@ -443,6 +650,7 @@ sealed class AppPage : Page
         updating = false;
         privRepo.Text = app.Settings.FirmwareRepo;
         RefreshPrivate();
+        RefreshPorts();
         RefreshAutostart("");
         string ver = typeof(AppPage).Assembly.GetName().Version?.ToString(3) ?? "?";
         about.Text = $"DeskBuddy pentru Windows {ver}\n{Environment.ProcessPath}\n" +

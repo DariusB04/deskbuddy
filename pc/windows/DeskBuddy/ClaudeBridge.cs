@@ -47,7 +47,7 @@ static class ClaudeBridge
         if (ev == "tool") pkt["tool"] = ToolLabel(Str(d?["tool_name"]));
         else if (ev == "notify") pkt["n"] = Cut(Str(d?["notification_type"]), 20);
         else if (ev == "fail") pkt["n"] = ErrorLabel(d?["error_type"] ?? d?["error"] ?? d?["reason"]);
-        UdpSender.SendOnce(Bytes(pkt));
+        Relay.Send(Bytes(pkt));
     }
 
     public static void StatusLine(bool wrap)
@@ -64,7 +64,7 @@ static class ClaudeBridge
         if (Num(sd?["used_percentage"]) is double w) { pkt["w"] = Math.Round(w, 1); pkt["wr"] = Epoch(sd?["resets_at"]); }
         if (Num(d?["context_window"]?["used_percentage"]) is double c) pkt["c"] = (int)c;
         pkt["at"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        UdpSender.SendOnce(Bytes(pkt));
+        Relay.Send(Bytes(pkt));
 
         if (pkt.ContainsKey("h") || pkt.ContainsKey("w"))      // aplicația din tray îl retrimite la 30 s
         {
@@ -273,11 +273,11 @@ static class ClaudeBridge
     }
 
     // ------------------------------------------------------------ test fără Claude Code
-    public static void Test(UdpSender udp)
+    public static void Test(Action<byte[]> send)
     {
         const string sid = "test1234";
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        udp.Send(Bytes(new JsonObject   // fără "at": nu blochează usage-ul real
+        send(Bytes(new JsonObject   // fără "at": nu blochează usage-ul real
         {
             ["t"] = "cu", ["s"] = sid, ["m"] = "Opus", ["h"] = 37.5, ["hr"] = now + 7200, ["w"] = 61.0, ["wr"] = now + 3 * 86400, ["c"] = 22,
         }));
@@ -291,7 +291,7 @@ static class ClaudeBridge
             var p = new JsonObject { ["t"] = "ce", ["e"] = ev, ["s"] = sid };
             if (tool != null) p["tool"] = tool;
             if (n != null) p["n"] = n;
-            udp.Send(Bytes(p));
+            send(Bytes(p));
             Thread.Sleep(wait);
         }
     }

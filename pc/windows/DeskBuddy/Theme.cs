@@ -54,6 +54,12 @@ static class Theme
         Font = Body, ForeColor = Fg, BackColor = Input, BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 4, 8, 6),
     };
 
+    public static ComboBox Combo(int width) => new()
+    {
+        Font = Body, ForeColor = Fg, BackColor = Input, FlatStyle = FlatStyle.Flat, DropDownStyle = ComboBoxStyle.DropDownList,
+        Width = width, Margin = new Padding(0, 6, 8, 6), Cursor = Cursors.Hand,
+    };
+
     /// rând orizontal (ex. câmp + buton)
     public static FlowLayoutPanel Row(params Control[] items)
     {

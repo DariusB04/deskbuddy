@@ -45,8 +45,11 @@ KY-016 are de obicei rezistențele pe plăcuță (R1–R3). Dacă locurile lor s
 
 ## 2. Firmware
 
-Din ultimul [release](../../releases/latest):
-- **`DeskBuddy-flash.bin`**: prima instalare, prin USB. Cel mai simplu din Chrome / Edge, cu [ESP Web Flasher](https://espressif.github.io/esptool-js/): Connect → alegi portul plăcii → fișierul la adresa **0x0** → Program.
+**Cel mai simplu: din aplicația de Windows.** Legi placa prin USB, pagina **Aplicație → Firmware prin USB → Scrie firmware-ul din release**.
+Aplicația ia firmware-ul din ultimul release, pune singură placa în modul de programare și verifică ce a scris. Dacă Windows n-are driverul cipului USB al plăcii (CP210x / CH340), aplicația îți spune și îți dă link-ul.
+
+Fără aplicație, din ultimul [release](../../releases/latest):
+- **`DeskBuddy-flash.bin`**: prima instalare, prin USB. Din Chrome / Edge, cu [ESP Web Flasher](https://espressif.github.io/esptool-js/): Connect → alegi portul plăcii → fișierul la adresa **0x0** → Program.
   Sau din linia de comandă: `esptool.py --chip esp32 write_flash 0x0 DeskBuddy-flash.bin`
 - **`DeskBuddy.ino.bin`**: update-urile de după, prin WiFi: din aplicația de Windows (cu un click) sau din pagina plăcii → **Actualizare firmware**. Setările rămân.
 
@@ -73,7 +76,11 @@ Se deschide fereastra DeskBuddy, plus o iconiță în tray (punct verde = placa 
 - **Dispozitiv**: pagina de setări a plăcii, direct în fereastră
 - **PC**: ce trimite acum (CPU / GPU / RAM), dacă placa e găsită, IP-ul plăcii (doar dacă routerul blochează broadcast-ul), starea temperaturii CPU
 - **Claude Code**: integrarea cu Claude Code, usage-ul 5h / 7 zile, test pentru ecranul CLAUDE
-- **Aplicație**: pornește cu Windows (ca admin, fără prompt UAC), pornire direct în tray, **update-uri** (aplicația se actualizează singură; firmware-ul plăcii se urcă prin WiFi cu un click)
+- **Aplicație**: pornește cu Windows (ca admin, fără prompt UAC), pornire direct în tray, **update-uri** (aplicația se actualizează singură; firmware-ul plăcii se urcă prin WiFi cu un click, sau prin USB)
+
+**USB sau WiFi** (pagina PC → Conexiune): *Auto* trimite pe cablu când placa e legată la PC, altfel pe WiFi; mai sunt *Doar USB* și *Doar WiFi*.
+Pe USB merg ecranele PC, CLAUDE și CEAS (ora vine de la PC) și fără WiFi; VREME și IMPRIMANTA au nevoie de WiFi.
+Cu placa pe cablu, WiFi-ul ei se setează direct din aplicație (pagina PC → WiFi-ul plăcii): cauți rețelele, scrii parola, gata.
 
 Temperatura CPU (Ryzen / Intel) cere **drepturi de admin** și driverul **PawnIO** (`winget install namazso.PawnIO` sau https://pawnio.eu).
 Fără ele merg load-ul CPU, RAM-ul și GPU-ul NVIDIA, iar pe ecran temperatura CPU apare `--`. Pagina PC arată ce lipsește.

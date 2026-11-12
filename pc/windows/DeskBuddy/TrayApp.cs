@@ -21,8 +21,15 @@ sealed class TrayApp : ApplicationContext
     /// pe thread-ul UI, după fiecare citire (o dată pe secundă)
     public event Action? Updated;
 
-    /// IP-ul plăcii: cel setat de mână sau cel găsit prin deskbuddy.local
-    public IPAddress? Device => Settings.HostIp ?? resolved;
+    /// IP-ul plăcii: cel setat de mână, cel găsit prin deskbuddy.local sau cel spus de placă pe USB
+    public IPAddress? Device => Settings.HostIp ?? resolved ?? (usb.Connected?.Ip is { } uip && IPAddress.TryParse(uip, out var a) ? a : null);
+
+    /// placa pe USB (null = nu e conectată prin cablu sau are firmware fără USB)
+    public UsbLink.Board? UsbBoard => usb.Connected;
+    /// pe unde pleacă acum datele
+    public bool SendingOverUsb => Settings.Link != LinkMode.Wifi && usb.Connected != null;
+    /// placa e conectată la PC (USB sau găsită în rețea)
+    public bool DeviceFound => Device != null || usb.Connected != null;
     public string? DeviceUrl => Device is { } ip ? $"http://{ip}/" : null;
 
     readonly NotifyIcon tray;
@@ -30,12 +37,14 @@ sealed class TrayApp : ApplicationContext
     readonly ToolStripMenuItem miStats = new() { Enabled = false };
     readonly WindowsFormsSynchronizationContext ui;
     readonly UdpSender udp = new();
+    readonly UsbLink usb = new();
+    readonly IDisposable? relay;
     readonly System.Threading.Timer timer;
     readonly EventWaitHandle? showSignal;
     MainForm? form;
     Sensors? sensors;
     int busy;
-    long usageAt = -60_000, deviceAt = -60_000;     // „demult”: prima bifă le face imediat
+    long usageAt = -60_000, deviceAt = -60_000, timeAt = -60_000;   // „demult”: prima bifă le face imediat
     volatile IPAddress? resolved;
     Health health = Health.Starting;
     Icon? currentIcon;
@@ -50,8 +59,15 @@ sealed class TrayApp : ApplicationContext
     public string? UpdateError { get; private set; }
     public string? PrivateError { get; private set; }
     /// placa: null = nu răspunde; Version "" = firmware vechi (fără /api/version)
-    public DeviceFirmware.Board? Board { get; private set; }
+    DeviceFirmware.Board? wifiBoard;
+    /// versiunea plăcii: din pagina ei (WiFi) sau, fără WiFi, de pe USB
+    public DeviceFirmware.Board? Board
+    {
+        get => wifiBoard ?? (usb.Connected is { } u ? new DeviceFirmware.Board(u.Version, u.Variant) : null);
+        private set => wifiBoard = value;
+    }
     public string? BoardVersion => Board?.Version;
+    public bool BoardViaUsb => wifiBoard == null && usb.Connected != null;
     public bool AppUpdateAvailable => Release?.App != null && Release.Version > Updater.Current;
 
     /// firmware-ul plăcii se ia din același loc din care a venit: "full" din repo-ul privat, "public" din cel public;
@@ -82,6 +98,13 @@ sealed class TrayApp : ApplicationContext
         var miExit = new ToolStripMenuItem("Ieșire");
         menu.Items.AddRange([miOpen, miBrowser, new ToolStripSeparator(), miStats, new ToolStripSeparator(), miExit]);
         ui = new WindowsFormsSynchronizationContext();
+        usb.Enabled = Settings.Link != LinkMode.Wifi;
+        usb.Changed += () =>
+        {
+            timeAt = -60_000;                         // ora pleacă imediat pe USB
+            ui.Post(_ => { if (!Quitting) Updated?.Invoke(); }, null);
+        };
+        relay = Relay.Listen(Route);
 
         tray = new NotifyIcon { ContextMenuStrip = menu, Text = "DeskBuddy", Visible = true };
         SetHealth(Health.Starting, force: true);
@@ -146,7 +169,112 @@ sealed class TrayApp : ApplicationContext
         deviceAt = -60_000;                           // caută din nou acum
     }
 
-    public Task SendClaudeTestAsync() => Task.Run(() => ClaudeBridge.Test(udp));
+    public Task SendClaudeTestAsync() => Task.Run(() => ClaudeBridge.Test(Route));
+
+    /// rețelele WiFi văzute de placă (prin USB); null = placa nu e pe USB / n-a răspuns
+    public async Task<List<(string Ssid, int Rssi, bool Locked)>?> UsbScanWifiAsync()
+    {
+        string? reply = await usb.RequestAsync("{\"t\":\"scan\"}", "{\"scan\"", 12_000);
+        if (reply == null) return null;
+        var list = new List<(string, int, bool)>();
+        try
+        {
+            using var d = System.Text.Json.JsonDocument.Parse(reply);
+            foreach (var n in d.RootElement.GetProperty("scan").EnumerateArray())
+                list.Add((n.GetProperty("s").GetString() ?? "", n.GetProperty("r").GetInt32(), n.GetProperty("l").GetBoolean()));
+        }
+        catch (Exception e) when (e is System.Text.Json.JsonException or KeyNotFoundException or InvalidOperationException) { return null; }
+        return list.OrderByDescending(x => x.Item2).ToList();
+    }
+
+    /// salvează WiFi-ul pe placă prin USB (placa repornește și se conectează); parolă goală = păstrează parola veche a aceleiași rețele
+    public async Task<bool> UsbSaveWifiAsync(string ssid, string password)
+    {
+        var json = new System.Text.Json.Nodes.JsonObject { ["t"] = "wifi", ["ssid"] = ssid, ["pass"] = password }.ToJsonString();
+        string? reply = await usb.RequestAsync(json, "{\"wifi_saved\"", 5000);
+        if (reply?.Contains("true") != true) return false;
+        resolved = null;                              // IP-ul se poate schimba
+        deviceAt = -60_000;
+        return true;
+    }
+
+    public void SetLinkMode(LinkMode mode)
+    {
+        Settings.Link = mode;
+        Settings.Save();
+        usb.Enabled = mode != LinkMode.Wifi;
+    }
+
+    /// trimite un pachet la placă: Auto = USB dacă e conectată prin cablu, altfel WiFi
+    public void Route(byte[] data)
+    {
+        var mode = Settings.Link;
+        if (mode != LinkMode.Wifi && usb.Send(data)) return;
+        if (mode != LinkMode.Usb) udp.Send(data);
+    }
+
+    // ------------------------------------------------------------ flash prin USB
+    public enum UsbFlashKind { KeepSettings, Full }
+
+    public static List<UsbLink.PortInfo> UsbPorts() => UsbLink.CandidatePorts();
+
+    /// scrie firmware-ul prin USB: din release (varianta potrivită) sau dintr-un fișier .bin ales de mână
+    public async Task<string> FlashUsbAsync(string portName, UsbFlashKind kind, string? localFile, IProgress<string> status)
+    {
+        byte[] image;
+        bool merged;
+        try
+        {
+            if (localFile != null)
+            {
+                image = await File.ReadAllBytesAsync(localFile);
+                merged = EspFlasher.LooksLikeMerged(image);
+                if (!merged && !DeviceFirmware.LooksLikeApp(image)) return "Fișierul nu e un firmware ESP32 (nici DeskBuddy-flash.bin, nici DeskBuddy.ino.bin).";
+            }
+            else
+            {
+                var rel = FirmwareRelease;
+                if (rel?.Flash is not Asset asset)
+                    return PrivateFirmwareMissing ? "Firmware-ul plăcii vine din repo-ul privat: completează-l mai jos și apasă „Verifică acum”."
+                                                  : "Nu găsesc DeskBuddy-flash.bin în ultimul release. Apasă „Verifică acum”.";
+                bool priv = UsePrivateFirmware;
+                status.Report("Descarc firmware-ul din GitHub...");
+                image = await Updater.DownloadAsync(asset, priv ? Settings.FirmwareToken : null);
+                merged = EspFlasher.LooksLikeMerged(image);
+                if (!merged) return "DeskBuddy-flash.bin din release nu arată ca o imagine completă.";
+            }
+        }
+        catch (Exception e) { return "Nu pot citi firmware-ul: " + e.Message; }
+
+        var regions = merged
+            ? kind == UsbFlashKind.Full ? EspFlasher.PlanFull(image) : EspFlasher.PlanKeepSettings(image)
+            : EspFlasher.PlanApp(image);
+
+        usb.Pause();
+        try
+        {
+            await Task.Run(() =>
+            {
+                using var f = new EspFlasher(portName, status);
+                f.Flash(regions);
+            });
+        }
+        catch (Exception e) when (e is IOException or TimeoutException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            return "Flash eșuat: " + e.Message;
+        }
+        finally { usb.Resume(); }
+
+        status.Report("Placa repornește...");
+        for (int i = 0; i < 20; i++)                  // așteaptă să răspundă pe USB (setup-ul poate aștepta WiFi-ul ~20 s)
+        {
+            await Task.Delay(1500);
+            if (usb.Connected is { } b) return $"Gata: placa rulează firmware-ul {b.Version} ({b.Variant}).";
+        }
+        return kind == UsbFlashKind.Full
+            ? "Gata. Placa pornește în modul SETUP: conectează-te la rețeaua DeskBuddy-Setup ca să-i dai WiFi-ul (sau las-o doar pe USB)."
+            : "Gata, firmware scris. Placa n-a răspuns încă pe USB (dacă „Conexiune” e pe „Doar WiFi”, e normal).";
+    }
 
     // ------------------------------------------------------------ update-uri
     async Task PeriodicChecksAsync()
@@ -301,6 +429,8 @@ sealed class TrayApp : ApplicationContext
         tray.Visible = false;
         tray.Dispose();
         sensors?.Dispose();
+        relay?.Dispose();
+        usb.Dispose();
         udp.Dispose();
         ExitThread();
     }
@@ -313,12 +443,17 @@ sealed class TrayApp : ApplicationContext
         {
             sensors ??= new Sensors();                 // prima deschidere poate dura câteva secunde
             var s = sensors.Read();
-            udp.Send(s.ToPacket());
+            Route(s.ToPacket());
             long now = Environment.TickCount64;
             if (now - usageAt > 30_000)
             {
                 usageAt = now;
-                if (ClaudeBridge.CachedUsagePacket() is byte[] cu) udp.Send(cu);
+                if (ClaudeBridge.CachedUsagePacket() is byte[] cu) Route(cu);
+            }
+            if (usb.Connected != null && now - timeAt > 60_000)   // fără WiFi placa n-are NTP: îi dăm ora PC-ului
+            {
+                timeAt = now;
+                usb.Send(System.Text.Encoding.UTF8.GetBytes($"{{\"t\":\"tm\",\"s\":{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}}}"));
             }
             if (now - deviceAt > 30_000)
             {
@@ -329,7 +464,7 @@ sealed class TrayApp : ApplicationContext
             {
                 if (Quitting) return;
                 Latest = s;
-                SetHealth(Device != null ? Health.Ok : Health.NoDevice);
+                SetHealth(DeviceFound ? Health.Ok : Health.NoDevice);
                 string tip = $"DeskBuddy\n{s.Summary()}";
                 tray.Text = tip.Length > 127 ? tip[..127] : tip;
                 Updated?.Invoke();

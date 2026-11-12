@@ -33,6 +33,8 @@ static class Program
             case "claude-uninstall":
                 ClaudeBridge.Uninstall();
                 return 0;
+            case "usb-flash":                         // DeskBuddy.exe usb-flash COM3 <fișier.bin|-> probe|keep|full (pentru teste / depanare)
+                return EspFlasher.Cli(args);
             case "--autostart":
                 return Autostart.Apply(args.Length > 1 && args[1] == "on") ? 0 : 1;
             case "--via-task":                        // repornire ca admin prin task: așteaptă să se închidă instanța veche
