@@ -33,6 +33,8 @@ static class Program
             case "claude-uninstall":
                 ClaudeBridge.Uninstall();
                 return 0;
+            case "make-icon":                         // pentru build: regenerează DeskBuddy.ico din desenul iconiței din tray
+                return TrayApp.WriteIco(args.Length > 1 ? args[1] : "DeskBuddy.ico");
             case "usb-flash":                         // DeskBuddy.exe usb-flash COM3 <fișier.bin|-> probe|keep|full (pentru teste / depanare)
                 return EspFlasher.Cli(args);
             case "--autostart":

@@ -517,9 +517,45 @@ sealed class TrayApp : ApplicationContext
     static Icon MakeIcon(Color dot)
     {
         using var bmp = new Bitmap(32, 32);
-        using (var g = Graphics.FromImage(bmp))
+        using (var g = Graphics.FromImage(bmp)) DrawLogo(g, 32, dot);
+        IntPtr h = bmp.GetHicon();
+        try { return (Icon)Icon.FromHandle(h).Clone(); }
+        finally { DestroyIcon(h); }
+    }
+
+    /// iconița exe-ului (DeskBuddy.ico) = cea din tray cu punctul verde, în toate mărimile Windows, ca PNG-uri într-un .ico
+    ///   DeskBuddy.exe make-icon pc\windows\DeskBuddy\DeskBuddy.ico
+    public static int WriteIco(string path)
+    {
+        int[] sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256];
+        var pngs = sizes.Select(s =>
         {
-            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using var bmp = new Bitmap(s, s);
+            using (var g = Graphics.FromImage(bmp)) DrawLogo(g, s, Theme.Accent);
+            using var ms = new MemoryStream();
+            bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+            return ms.ToArray();
+        }).ToArray();
+        using var f = new BinaryWriter(File.Create(path));
+        f.Write((ushort)0); f.Write((ushort)1); f.Write((ushort)sizes.Length);          // antet ICO
+        int offset = 6 + 16 * sizes.Length;
+        for (int i = 0; i < sizes.Length; i++)
+        {
+            f.Write((byte)(sizes[i] >= 256 ? 0 : sizes[i])); f.Write((byte)(sizes[i] >= 256 ? 0 : sizes[i]));
+            f.Write((byte)0); f.Write((byte)0); f.Write((ushort)1); f.Write((ushort)32);
+            f.Write(pngs[i].Length); f.Write(offset);
+            offset += pngs[i].Length;
+        }
+        foreach (var p in pngs) f.Write(p);
+        return 0;
+    }
+
+    /// desenat pe o grilă de 32, scalat la mărimea cerută
+    static void DrawLogo(Graphics g, float size, Color dot)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.ScaleTransform(size / 32f, size / 32f);
+        {
             using var body = Theme.Rounded(new RectangleF(2, 3, 28, 25), 6);
             using var bodyBrush = new SolidBrush(Color.FromArgb(235, 238, 240));
             g.FillPath(bodyBrush, body);
@@ -534,9 +570,7 @@ sealed class TrayApp : ApplicationContext
             g.FillEllipse(dotBrush, 21, 20, 10, 10);
             g.DrawEllipse(ring, 21, 20, 10, 10);
         }
-        IntPtr h = bmp.GetHicon();
-        try { return (Icon)Icon.FromHandle(h).Clone(); }
-        finally { DestroyIcon(h); }
+        g.ResetTransform();
     }
 
     [DllImport("user32.dll")]
