@@ -1,0 +1,11 @@
+pc/windows/DeskBuddy/bin/
+pc/windows/DeskBuddy/obj/
+pc/windows/DeskBuddy.exe
+pc/windows/DeskBuddy.exe.old
+pc/windows/DeskBuddy.exe.new
+__pycache__/
+*.pyc
+.vs/
+.vscode/
+.idea/
+*.user

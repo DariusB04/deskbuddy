@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- DeskBuddy pentru Windows: aplicație în tray care trimite temperaturile PC-ului și starea Claude Code la DeskBuddy (UDP 4210).
+       Build:  dotnet publish -c Release -o ..   ->  pc\windows\DeskBuddy.exe -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>DeskBuddy</AssemblyName>
+    <RootNamespace>DeskBuddy</RootNamespace>
+    <!-- la release, GitHub Actions dă -p:Version=<tag> și -p:GitHubRepo=<owner/repo> -->
+    <Version>1.1.0</Version>
+    <GitHubRepo Condition="'$(GitHubRepo)' == ''"></GitHubRepo>
+    <Product>DeskBuddy</Product>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- un singur .exe care nu cere .NET instalat (~107 MB). Comprimat ar avea 49 MB, dar ia dublu RAM (85 vs 41 MB privat)
+         și pornește hook-urile în 140 ms în loc de 65 ms: pentru o aplicație mereu pornită contează mai mult memoria.
+         Varianta mică (4.8 MB): dotnet publish -c Release -o .. -p:SelfContained=false, dar cere .NET 10 Desktop Runtime instalat. -->
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- citește senzorii direct (fără LibreHardwareMonitor pornit separat); temperatura CPU cere admin + driverul PawnIO -->
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
+    <!-- pagina de setări a plăcii, afișată în fereastră (WebView2 Runtime vine cu Windows 11) -->
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- de unde verifică aplicația update-urile (gol = nu verifică) -->
+    <AssemblyMetadata Include="GitHubRepo" Value="$(GitHubRepo)" />
+  </ItemGroup>
+
+  <!-- pachetul WebView2 aduce și varianta WPF: n-o folosim (doar WinForms), deci n-o includem -->
+  <Target Name="DropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+
+</Project>
