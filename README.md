@@ -3,8 +3,6 @@
 Un gadget de birou: ESP32 + ecran OLED 128×64 într-o carcasă printată 3D, ridicată pe 4 picioruțe, cu un LED RGB care luminează biroul de dedesubt.
 Butonul de sus schimbă ecranele: **CEAS** → **VREME** → **PC** → **IMPRIMANTA** → **CLAUDE** → **SISTEM** (din pagina de setări alegi care apar).
 
-![DeskBuddy](preview.png)
-
 - **CEAS**: ora cu cifre „dot-matrix”, data, secundele
 - **VREME**: acum + 3 zile (Open-Meteo, fără cont), după IP sau orașul ales
 - **PC**: temperaturi și load CPU / GPU / RAM de la PC (aplicația de Windows sau scriptul de Linux)
@@ -19,8 +17,7 @@ deskbuddy/
 ├── pc/windows/   aplicația de Windows (C#, .NET 10): sursa; exe-ul vine din Releases
 ├── pc/           pc_stats_sender.py, claude_bridge.py (Linux)
 ├── cad/          deskbuddy_cad.py – modelul parametric al carcasei (CadQuery)
-├── stl/ step/    piesele carcasei
-└── preview/      modelele componentelor (ESP32, OLED, LED)
+└── stl/ step/    piesele carcasei
 ```
 
 Firmware-ul plăcii se instalează din **[Releases](../../releases)** (sursa lui nu e publică).
