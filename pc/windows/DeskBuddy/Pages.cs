@@ -195,7 +195,7 @@ sealed class PcPage : Page
             cpu.Set($"{T(s.CpuT)} · {P(s.CpuL)}", s.CpuL, Theme.TempColor(s.CpuT), "temperatură · load");
             gpu.Set($"{T(s.GpuT)} · {P(s.GpuL)}", s.GpuL, Theme.TempColor(s.GpuT), "temperatură · load");
             string used = s.RamU is float u && s.RamT is float t ? string.Create(CultureInfo.InvariantCulture, $"{u:0.0} / {t:0} GB · ") : "";
-            ram.Set(used + P(s.RamL), s.RamL, Theme.Accent);
+            ram.Set(used + P(s.RamL), s.RamL, Theme.Accent, app.Game is { } g ? "joc: " + g : "");
         }
 
         var mode = app.Settings.Link;

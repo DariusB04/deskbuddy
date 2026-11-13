@@ -38,6 +38,9 @@ sealed class TrayApp : ApplicationContext
     readonly WindowsFormsSynchronizationContext ui;
     readonly UdpSender udp = new();
     readonly UsbLink usb = new();
+    readonly GameDetector games = new();
+    /// jocul pornit acum (null = niciunul)
+    public string? Game { get; private set; }
     readonly BoardNeeds needs;
     readonly IDisposable? relay;
     readonly System.Threading.Timer timer;
@@ -530,7 +533,8 @@ sealed class TrayApp : ApplicationContext
         {
             sensors ??= new Sensors();                 // prima deschidere poate dura câteva secunde
             var s = sensors.Read();
-            Route(s.ToPacket());
+            Game = games.Current();
+            Route(s.ToPacket(Game));
             long now = Environment.TickCount64;
             if (now - usageAt > 30_000)
             {
