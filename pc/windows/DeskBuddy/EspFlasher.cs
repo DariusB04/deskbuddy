@@ -42,7 +42,7 @@ sealed class EspFlasher : IDisposable
     {
         var ota = new byte[0x2000];
         Array.Fill(ota, (byte)0xFF);                      // = boot_app0.bin din core-ul ESP32
-        ota[0] = 1;
+        ota[0] = 1; ota[1] = ota[2] = ota[3] = 0;        // ota_seq = 1 pe 4 octeți -> pornește din app0
         ota[0x1C] = 0x9A; ota[0x1D] = 0x98; ota[0x1E] = 0x43; ota[0x1F] = 0x47;
         ota[0x1000] = ota[0x1001] = ota[0x1002] = ota[0x1003] = 0;
         return [new(OtaData, ota), new(AppStart, app)];
