@@ -74,6 +74,7 @@ Codurile `rc` afișate: `-2` = nu ajunge la server / port 8883, `-4` timeout, `4
 Descarci `DeskBuddy-Windows.zip` din [Releases](../../releases/latest) și pornești `DeskBuddy.exe` (nu cere .NET instalat).
 Se deschide fereastra DeskBuddy, plus o iconiță în tray (punct verde = placa găsită în rețea, galben = negăsită, dar trimite oricum broadcast).
 - **Acasă**: cum e legată placa (USB, WiFi direct sau WiFi prin router) și tot ce arată ea: PC, joc + FPS, Claude, imprimanta, vremea, sistemul plăcii
+- **Ecran**: ecranul plăcii live și butoanele ei (înapoi / următorul / LED / salt pe un ecran), dacă butonul fizic nu merge
 - **Placă**: toate setările plăcii, native (ecrane, afișaj și LED, vreme, WiFi, imprimantă cu login Bambu, Claude Code, parolă); merg prin USB sau WiFi
 - **PC**: ce trimite acum (CPU / GPU / RAM), dacă placa e găsită, IP-ul plăcii (doar dacă routerul blochează broadcast-ul), starea temperaturii CPU
 - **Claude Code**: integrarea cu Claude Code, usage-ul 5h / 7 zile, test pentru ecranul CLAUDE
