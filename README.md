@@ -1,4 +1,4 @@
-# DeskBuddy – ESP32 + OLED + LED
+# DeskBuddy – ESP32 + OLED + LED „sub birou”
 
 Un gadget de birou: ESP32 + ecran OLED 128×64 într-o carcasă printată 3D, ridicată pe 4 picioruțe, cu un LED RGB care luminează biroul de dedesubt.
 Butonul de sus schimbă ecranele: **CEAS** → **VREME** → **PC** → **IMPRIMANTA** → **CLAUDE** → **SISTEM** (din pagina de setări alegi care apar).

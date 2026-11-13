@@ -49,6 +49,11 @@ sealed class TrayApp : ApplicationContext
     readonly UsbLink usb = new();
     readonly WifiLink wifi = new();
     readonly FpsMonitor fps = new();
+    readonly MediaWatcher media = new();
+    string? mediaSent;
+    long mediaAt = -60_000;
+    /// ce se redă acum pe PC (null = nimic)
+    public MediaWatcher.Now? Media => media.Current;
     readonly GameDetector games = new();
     /// jocul pornit acum (null = niciunul)
     public string? Game { get; private set; }
@@ -283,6 +288,26 @@ sealed class TrayApp : ApplicationContext
 
     /// scrie firmware-ul prin USB: din release (varianta potrivită) sau dintr-un fișier .bin ales de mână
     /// null = scris și verificat; altfel mesajul de eroare
+    /// ecranul MUZICA: la schimbare imediat, altfel la 2 s (placa ține poziția la zi între pachete)
+    void SendMedia(long now)
+    {
+        var m = media.Current;
+        var o = new JsonObject { ["t"] = "md", ["st"] = m?.St ?? 0 };
+        if (m != null)
+        {
+            o["ti"] = MediaWatcher.Ascii(m.Title, 63);
+            o["ar"] = MediaWatcher.Ascii(m.Artist, 39);
+            o["ap"] = MediaWatcher.Ascii(m.App, 15);
+            if (m.Dur is double du) o["du"] = Math.Round(du, 1);
+            if (m.Pos is double po) o["po"] = Math.Round(po + (m.St == 1 ? (DateTime.Now - m.At).TotalSeconds : 0), 1);
+        }
+        string key = $"{m?.St}|{m?.Title}|{m?.Artist}|{m?.App}|{m?.Dur}";
+        if (key == mediaSent && now - mediaAt < 2000) return;
+        mediaSent = key;
+        mediaAt = now;
+        Route(System.Text.Encoding.UTF8.GetBytes(o.ToJsonString()));
+    }
+
     async Task<string?> WriteFlashAsync(string portName, List<EspFlasher.Region> regions, IProgress<string> status)
     {
         usb.Pause();
@@ -495,6 +520,7 @@ sealed class TrayApp : ApplicationContext
         usb.Dispose();
         wifi.Dispose();
         fps.Dispose();
+        media.Dispose();
         ExitThread();
     }
 
@@ -511,6 +537,7 @@ sealed class TrayApp : ApplicationContext
             Fps = f?.Fps;
             Route(s.ToPacket(Game, f?.Fps, f?.FrameMs));
             long now = Environment.TickCount64;
+            SendMedia(now);
             if (now - usageAt > 30_000)
             {
                 usageAt = now;

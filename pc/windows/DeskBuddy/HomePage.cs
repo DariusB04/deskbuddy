@@ -19,6 +19,9 @@ sealed class HomePage : Page
     readonly MetricBar printBar = new("Progres");
     readonly Label printInfo = Note("");
     readonly Label weather = Theme.Label("");
+    readonly Label mediaTitle = Theme.Label("", Theme.Value);
+    readonly Label mediaInfo = Note("");
+    readonly MetricBar mediaBar = new("Progres");
     readonly Label boardInfo = Note("");
     readonly MetricBar heap = new("RAM placă"), cores = new("Procesor placă");
     readonly Label boardError = Theme.Label("", Theme.Small, Theme.Muted);
@@ -37,6 +40,8 @@ sealed class HomePage : Page
         cl.Controls.AddRange([claude, h5, d7]);
         var pr = AddCard("Imprimantă");
         pr.Controls.AddRange([printer, printBar, printInfo]);
+        var md = AddCard("Se ascultă");
+        md.Controls.AddRange([mediaTitle, mediaInfo, mediaBar]);
         var wx = AddCard("Vreme");
         wx.Controls.Add(weather);
         var b = AddCard("Placa");
@@ -47,6 +52,7 @@ sealed class HomePage : Page
     {
         RefreshLink();
         RefreshPc();
+        RefreshMedia();
         long now = Environment.TickCount64;
         if (!busy && app.DeviceFound && (now - statusAt > 3000 || now - sysAt > 15_000)) _ = PollAsync(now - sysAt > 15_000);
         Show();
@@ -171,6 +177,22 @@ sealed class HomePage : Page
                 var vals = ca.Select(x => (int?)x ?? 0).ToArray();
                 cores.Set(string.Join(" · ", vals.Select((v, i) => $"nucleu {i}: {v}%")), vals.Max(), Theme.Accent);
             }
+        }
+    }
+
+    void RefreshMedia()
+    {
+        var m = app.Media;
+        if (m == null) { mediaTitle.Text = "Nimic nu se redă"; mediaTitle.ForeColor = Theme.Muted; mediaInfo.Text = "Spotify, YouTube în browser, orice player din panoul de volum Windows."; mediaBar.Visible = false; return; }
+        mediaTitle.Text = m.Title.Length > 0 ? m.Title : "?";
+        mediaTitle.ForeColor = Theme.Fg;
+        mediaInfo.Text = string.Join(" · ", new[] { m.Artist, m.App, m.St == 1 ? "se redă" : "pauză" }.Where(x => x.Length > 0));
+        mediaBar.Visible = m.Dur is > 0;
+        if (m.Dur is double du && du > 0)
+        {
+            double pos = Math.Min(du, (m.Pos ?? 0) + (m.St == 1 ? (DateTime.Now - m.At).TotalSeconds : 0));
+            static string T(double s) => s >= 3600 ? $"{(int)s / 3600}:{(int)s / 60 % 60:00}:{(int)s % 60:00}" : $"{(int)s / 60}:{(int)s % 60:00}";
+            mediaBar.Set($"{T(pos)} / {T(du)}", (float)(100 * pos / du), Theme.Accent);
         }
     }
 

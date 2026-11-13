@@ -4,7 +4,9 @@
        Build:  dotnet publish -c Release -o ..   ->  pc\windows\DeskBuddy.exe -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- Windows 10 2004+: API-ul WinRT pentru ce se redă (Windows.Media.Control) -->
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <Nullable>enable</Nullable>
@@ -12,7 +14,7 @@
     <AssemblyName>DeskBuddy</AssemblyName>
     <RootNamespace>DeskBuddy</RootNamespace>
     <!-- la release, GitHub Actions dă -p:Version=<tag> și -p:GitHubRepo=<owner/repo> -->
-    <Version>2.0.0</Version>
+    <Version>2.1.0</Version>
     <GitHubRepo Condition="'$(GitHubRepo)' == ''"></GitHubRepo>
     <Product>DeskBuddy</Product>
     <!-- aceeași iconiță ca în tray; regenerată cu: DeskBuddy.exe make-icon DeskBuddy.ico -->

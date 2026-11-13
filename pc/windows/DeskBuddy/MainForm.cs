@@ -40,6 +40,7 @@ sealed class MainForm : Form
         Controls.Add(nav);
 
         AddPage("Acasă", new HomePage(app));
+        AddPage("Ecran", new ScreenPage(app));
         AddPage("Placă", new BoardPage(app));
         AddPage("PC", new PcPage(app));
         AddPage("Claude Code", new ClaudePage(app));
