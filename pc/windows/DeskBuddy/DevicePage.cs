@@ -14,6 +14,7 @@ sealed class DevicePage : Panel
     readonly Label address = Theme.Label("", Theme.Small, Theme.Muted);
     readonly Panel overlay = new() { Dock = DockStyle.Fill, BackColor = Theme.Bg };
     readonly Label overlayText = Theme.Label("", Theme.Body, Theme.Muted);
+    readonly Button browserButton = Theme.Button("Deschide în browser");
     WebView2? web;
     Task? init;
     string? loaded;
@@ -26,7 +27,7 @@ sealed class DevicePage : Panel
 
         var reload = Theme.Button("Reîncarcă");
         reload.Click += (_, _) => { loaded = null; Navigate(); };
-        var browser = Theme.Button("Deschide în browser");
+        var browser = browserButton;
         int btnH = reload.GetPreferredSize(Size.Empty).Height;
         var bar = new Panel { Dock = DockStyle.Top, Height = btnH + 16, BackColor = Theme.Nav, Padding = new Padding(16, 0, 8, 0) };
         address.Dock = DockStyle.Left;
@@ -58,10 +59,16 @@ sealed class DevicePage : Panel
         Navigate();
     }
 
-    /// s-a schimbat IP-ul plăcii (găsită / pierdută / setată de mână)
+    /// pagina plăcii: prin WiFi dacă o găsim în rețea, altfel prin cablul USB (aceeași pagină, servită de aplicație)
+    string? TargetUrl => app.DeviceUrl ?? (app.UsbBoard != null ? TrayApp.UsbPageUrl : null);
+
+    /// s-a schimbat IP-ul plăcii (găsită / pierdută / setată de mână) sau a apărut pe USB
     public void DeviceChanged()
     {
-        if (web?.CoreWebView2 != null && loaded != app.DeviceUrl) Navigate();
+        if (web?.CoreWebView2 == null) return;
+        // pe USB, placa dispare câteva secunde când repornește (după salvare): pagina se reîncarcă singură, nu o mutăm
+        if (loaded == TrayApp.UsbPageUrl && TargetUrl == null) return;
+        if (loaded != TargetUrl) Navigate();
     }
 
     async Task InitAsync()
@@ -84,6 +91,8 @@ sealed class DevicePage : Panel
                 if (!IsDeviceUrl(e.Uri)) { e.Cancel = true; OpenExternal(e.Uri); }
             };
             core.NewWindowRequested += (_, e) => { e.Handled = true; OpenExternal(e.Uri); };
+            core.AddWebResourceRequestedFilter(TrayApp.UsbPageUrl + "*", CoreWebView2WebResourceContext.All);
+            core.WebResourceRequested += OnUsbRequest;
             core.NavigationCompleted += (_, e) =>
             {
                 if (e.IsSuccess) HideMessage();
@@ -100,26 +109,61 @@ sealed class DevicePage : Panel
 
     void Navigate()
     {
-        string? url = app.DeviceUrl;
-        address.Text = url ?? "DeskBuddy negăsit în rețea";
+        string? url = TargetUrl;
+        bool viaUsb = url == TrayApp.UsbPageUrl;
+        address.Text = url == null ? "DeskBuddy negăsit în rețea sau pe USB" : viaUsb ? $"prin USB ({app.UsbBoard?.Port}), fără WiFi" : url;
+        browserButton.Enabled = !viaUsb && url != null;
         if (web?.CoreWebView2 == null) return;
         if (url == null)
         {
             loaded = null;
-            ShowMessage("Caut DeskBuddy în rețea (deskbuddy.local)...\n\nDacă nu apare, scrie IP-ul plăcii în pagina PC (îl vezi pe ecranul PC al plăcii).");
+            ShowMessage("Caut DeskBuddy în rețea (deskbuddy.local) și pe USB...\n\nDacă nu apare, leagă placa de PC cu un cablu USB " +
+                        "sau scrie IP-ul ei în pagina PC (îl vezi pe ecranul PC al plăcii).");
             return;
         }
         if (url == loaded) return;
         loaded = url;
-        ShowMessage("Se încarcă " + url + " ...");
+        ShowMessage((viaUsb ? "Încarc pagina plăcii prin USB" : "Se încarcă " + url) + " ...");
         web.CoreWebView2.Navigate(url);
     }
 
     bool IsDeviceUrl(string uri)
     {
         if (uri == "about:blank") return true;
+        if (uri.StartsWith(TrayApp.UsbPageUrl, StringComparison.OrdinalIgnoreCase)) return true;
         return app.DeviceUrl is { } dev && Uri.TryCreate(uri, UriKind.Absolute, out var u) && Uri.TryCreate(dev, UriKind.Absolute, out var d)
                && u.Scheme == Uri.UriSchemeHttp && string.Equals(u.Host, d.Host, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// cererile paginii deschise prin USB: le face aplicația, pe cablu
+    async void OnUsbRequest(object? sender, CoreWebView2WebResourceRequestedEventArgs e)
+    {
+        var deferral = e.GetDeferral();
+        try
+        {
+            var req = e.Request;
+            var uri = new Uri(req.Uri);
+            byte[]? body = null;
+            if (req.Content != null)
+            {
+                using var ms = new MemoryStream();
+                await req.Content.CopyToAsync(ms);
+                body = ms.ToArray();
+            }
+            string ctype = req.Headers.Contains("Content-Type") ? req.Headers.GetHeader("Content-Type") : "";
+            var (code, type, data) = await app.UsbFetchAsync(req.Method, uri.AbsolutePath, uri.Query, ctype, body);
+            if (web?.CoreWebView2 == null) return;
+            e.Response = web.CoreWebView2.Environment.CreateWebResourceResponse(new MemoryStream(data), code, code == 200 ? "OK" : "Error",
+                $"Content-Type: {type}\r\nCache-Control: no-store");
+        }
+        catch (Exception ex)
+        {
+            if (web?.CoreWebView2 != null)
+                e.Response = web.CoreWebView2.Environment.CreateWebResourceResponse(
+                    new MemoryStream(System.Text.Encoding.UTF8.GetBytes("{\"ok\":false,\"err\":\"" + ex.Message.Replace("\"", "'") + "\"}")),
+                    502, "Error", "Content-Type: application/json");
+        }
+        finally { deferral.Complete(); }
     }
 
     void ShowMessage(string text)

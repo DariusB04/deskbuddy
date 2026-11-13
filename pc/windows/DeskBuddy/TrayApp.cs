@@ -38,6 +38,7 @@ sealed class TrayApp : ApplicationContext
     readonly WindowsFormsSynchronizationContext ui;
     readonly UdpSender udp = new();
     readonly UsbLink usb = new();
+    readonly BoardNeeds needs;
     readonly IDisposable? relay;
     readonly System.Threading.Timer timer;
     readonly EventWaitHandle? showSignal;
@@ -105,6 +106,8 @@ sealed class TrayApp : ApplicationContext
             ui.Post(_ => { if (!Quitting) Updated?.Invoke(); }, null);
         };
         relay = Relay.Listen(Route);
+        needs = new BoardNeeds(usb.Send);             // vremea / imprimanta / login-ul Bambu pentru placa fără WiFi
+        usb.Need += needs.Handle;
 
         tray = new NotifyIcon { ContextMenuStrip = menu, Text = "DeskBuddy", Visible = true };
         SetHealth(Health.Starting, force: true);
@@ -219,6 +222,103 @@ sealed class TrayApp : ApplicationContext
     public static List<UsbLink.PortInfo> UsbPorts() => UsbLink.CandidatePorts();
 
     /// scrie firmware-ul prin USB: din release (varianta potrivită) sau dintr-un fișier .bin ales de mână
+    /// null = scris și verificat; altfel mesajul de eroare
+    async Task<string?> WriteFlashAsync(string portName, List<EspFlasher.Region> regions, IProgress<string> status)
+    {
+        usb.Pause();
+        try
+        {
+            await Task.Run(() =>
+            {
+                using var f = new EspFlasher(portName, status);
+                f.Flash(regions);
+            });
+            return null;
+        }
+        catch (Exception e) when (e is IOException or TimeoutException or UnauthorizedAccessException or InvalidOperationException)
+        {
+            return "Flash eșuat: " + e.Message;
+        }
+        finally { usb.Resume(); }
+    }
+
+    // ------------------------------------------------------------ pagina plăcii prin USB (pagina Dispozitiv, fără WiFi)
+    public const string UsbPageUrl = "http://deskbuddy.usb/";
+    (string Key, byte[] Html)? pageCache;
+
+    /// o cerere a paginii deschise la http://deskbuddy.usb/ -> placa, pe cablu: pagina însăși, /api/* sau upload-ul de firmware
+    public async Task<(int Code, string Type, byte[] Body)> UsbFetchAsync(string method, string path, string query, string contentType, byte[]? body)
+    {
+        static (int, string, byte[]) Json(int code, string json) => (code, "application/json", System.Text.Encoding.UTF8.GetBytes(json));
+        var board = usb.Connected;
+        if (path is "/" or "/index.html")
+        {
+            if (board == null)                         // repornește (după salvare): reîncercăm singuri
+                return (200, "text/html; charset=utf-8", System.Text.Encoding.UTF8.GetBytes(
+                    "<!doctype html><meta http-equiv=refresh content=3><body style='background:#0f1210;color:#8d998f;font:15px Segoe UI;" +
+                    "display:grid;place-items:center;height:90vh'>Aștept placa pe USB...</body>"));
+            string key = board.Version + "|" + board.Variant;
+            if (pageCache?.Key != key)
+            {
+                string? line = await usb.RequestAsync("{\"t\":\"page\"}", "{\"page\"", 10_000);
+                if (line == null) return (504, "text/plain; charset=utf-8", System.Text.Encoding.UTF8.GetBytes("Placa n-a trimis pagina."));
+                using var d = System.Text.Json.JsonDocument.Parse(line);
+                byte[] gz = Convert.FromBase64String(d.RootElement.GetProperty("page").GetString() ?? "");
+                using var unz = new System.IO.Compression.GZipStream(new MemoryStream(gz), System.IO.Compression.CompressionMode.Decompress);
+                using var ms = new MemoryStream();
+                await unz.CopyToAsync(ms);
+                pageCache = (key, ms.ToArray());
+            }
+            return (200, "text/html; charset=utf-8", pageCache.Value.Html);
+        }
+        if (board == null) return Json(503, "{\"ok\":false,\"err\":\"Placa nu e pe USB.\"}");
+
+        if (path == "/api/update")                    // upload-ul din pagină: îl scriem prin USB, cu bootloader-ul
+        {
+            byte[]? bin = body != null ? MultipartFile(contentType, body) : null;
+            if (bin == null || !DeviceFirmware.LooksLikeApp(bin)) return Json(200, "{\"ok\":false,\"err\":\"Fișierul nu e un firmware ESP32 (DeskBuddy.ino.bin).\"}");
+            string? err = await WriteFlashAsync(board.Port, EspFlasher.PlanApp(bin), new Progress<string>(_ => { }));
+            return err == null ? Json(200, $"{{\"ok\":true,\"kb\":{bin.Length / 1024}}}")
+                               : Json(200, System.Text.Json.JsonSerializer.Serialize(new { ok = false, err }));
+        }
+
+        if (!path.StartsWith("/api/", StringComparison.Ordinal)) return (404, "text/plain", System.Text.Encoding.UTF8.GetBytes("404"));
+        var args = new System.Text.Json.Nodes.JsonObject();
+        void Add(string? text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            var q = System.Web.HttpUtility.ParseQueryString(text);
+            foreach (string? k in q.AllKeys) if (k != null) args[k] = q[k] ?? "";
+        }
+        Add(query.TrimStart('?'));
+        if (body != null && contentType.StartsWith("application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase))
+            Add(System.Text.Encoding.UTF8.GetString(body));
+        int id = usb.NextId();
+        var req = new System.Text.Json.Nodes.JsonObject { ["t"] = "req", ["id"] = id, ["p"] = path, ["a"] = args };
+        string? res = await usb.RequestAsync(req.ToJsonString(), $"{{\"res\":{id},", 30_000);   // login-ul Bambu poate dura ~20 s
+        if (res == null) return Json(504, "{\"ok\":false,\"err\":\"Placa n-a răspuns pe USB.\"}");
+        using var r = System.Text.Json.JsonDocument.Parse(res);
+        var root = r.RootElement;
+        return (root.GetProperty("c").GetInt32(), root.GetProperty("ty").GetString() ?? "text/plain",
+                System.Text.Encoding.UTF8.GetBytes(root.GetProperty("b").GetString() ?? ""));
+    }
+
+    /// primul fișier dintr-un corp multipart/form-data
+    static byte[]? MultipartFile(string contentType, byte[] body)
+    {
+        int bi = contentType.IndexOf("boundary=", StringComparison.OrdinalIgnoreCase);
+        if (bi < 0) return null;
+        byte[] boundary = System.Text.Encoding.ASCII.GetBytes("\r\n--" + contentType[(bi + 9)..].Trim('"', ' '));
+        byte[] headEnd = "\r\n\r\n"u8.ToArray();
+        int start = body.AsSpan().IndexOf("filename="u8);
+        if (start < 0) return null;
+        int h = body.AsSpan(start).IndexOf(headEnd);
+        if (h < 0) return null;
+        int dataStart = start + h + headEnd.Length;
+        int end = body.AsSpan(dataStart).IndexOf(boundary);
+        return end < 0 ? null : body[dataStart..(dataStart + end)];
+    }
+
     public async Task<string> FlashUsbAsync(string portName, UsbFlashKind kind, string? localFile, IProgress<string> status)
     {
         byte[] image;
@@ -249,21 +349,7 @@ sealed class TrayApp : ApplicationContext
         var regions = merged
             ? kind == UsbFlashKind.Full ? EspFlasher.PlanFull(image) : EspFlasher.PlanKeepSettings(image)
             : EspFlasher.PlanApp(image);
-
-        usb.Pause();
-        try
-        {
-            await Task.Run(() =>
-            {
-                using var f = new EspFlasher(portName, status);
-                f.Flash(regions);
-            });
-        }
-        catch (Exception e) when (e is IOException or TimeoutException or UnauthorizedAccessException or InvalidOperationException)
-        {
-            return "Flash eșuat: " + e.Message;
-        }
-        finally { usb.Resume(); }
+        if (await WriteFlashAsync(portName, regions, status) is string err) return err;
 
         status.Report("Placa repornește...");
         for (int i = 0; i < 20; i++)                  // așteaptă să răspundă pe USB (setup-ul poate aștepta WiFi-ul ~20 s)
@@ -430,6 +516,7 @@ sealed class TrayApp : ApplicationContext
         tray.Dispose();
         sensors?.Dispose();
         relay?.Dispose();
+        needs.Dispose();
         usb.Dispose();
         udp.Dispose();
         ExitThread();

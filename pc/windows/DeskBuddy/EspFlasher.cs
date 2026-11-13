@@ -1,16 +1,15 @@
 using System.Buffers.Binary;
-using System.IO.Compression;
 using System.IO.Ports;
 using System.Security.Cryptography;
 
 namespace DeskBuddy;
 
 /// Scrie firmware-ul pe ESP32 prin USB, direct prin bootloader-ul din ROM (același protocol ca esptool, fără esptool):
-/// reset în modul de programare (DTR/RTS), SYNC, viteză mai mare, apoi fiecare zonă comprimată (zlib) și verificată cu MD5.
+/// reset în modul de programare (DTR/RTS), SYNC, viteză mai mare, apoi fiecare zonă scrisă necomprimat și verificată cu MD5.
 sealed class EspFlasher : IDisposable
 {
     const byte CmdSync = 0x08, CmdReadReg = 0x0A, CmdSpiSetParams = 0x0B, CmdSpiAttach = 0x0D, CmdChangeBaud = 0x0F,
-               CmdDeflBegin = 0x10, CmdDeflData = 0x11, CmdMd5 = 0x13;
+               CmdFlashBegin = 0x02, CmdFlashData = 0x03, CmdMd5 = 0x13;
     const int BlockSize = 0x400;                          // cât primește ROM-ul ESP32 într-un pachet
     const uint ChipMagicReg = 0x40001000, Esp32Magic = 0x00F01D83;
     public const int FlashSize = 4 * 1024 * 1024;
@@ -94,13 +93,69 @@ sealed class EspFlasher : IDisposable
             if (args[3] == "nvs")                      // depanare: zona de setări e goală (doar 0xFF) sau are date?
             {
                 f.Connect();
-                var r = f.Command(CmdMd5, U32(NvsStart, NvsEnd - NvsStart, 0, 0), timeoutMs: 8000, payload: 32);
-                string got = System.Text.Encoding.ASCII.GetString(r.Data, 0, 32);
-                var ff = new byte[NvsEnd - NvsStart];
+                var ff = new byte[0x1000];
                 Array.Fill(ff, (byte)0xFF);
-                Console.WriteLine("NVS " + (got.Equals(Convert.ToHexString(MD5.HashData(ff)), StringComparison.OrdinalIgnoreCase) ? "GOL (șters)" : "are date") + " md5=" + got);
+                string empty = Convert.ToHexString(MD5.HashData(ff));
+                for (int s = 0x8000; s < 0x10000; s += 0x1000)          // partițiile, NVS (5 sectoare), otadata (2)
+                {
+                    var r = f.Command(CmdMd5, U32(s, 0x1000, 0, 0), timeoutMs: 8000, payload: 32);
+                    string got = System.Text.Encoding.ASCII.GetString(r.Data, 0, 32);
+                    Console.WriteLine($"0x{s:X5}: " + (got.Equals(empty, StringComparison.OrdinalIgnoreCase) ? "gol" : "date ") + " " + got);
+                }
                 f.HardReset();
                 return 0;
+            }
+            if (args[3] == "nvskeys")                  // depanare: ce chei sunt în NVS (doar citire; fără valori)
+            {
+                f.Connect();
+                var nvs = new byte[NvsEnd - NvsStart];
+                for (int o = 0; o < nvs.Length; o += 64)
+                {
+                    var r = f.Command(0x0E, U32(NvsStart + o, 64), timeoutMs: 3000, payload: 64);   // READ_FLASH_SLOW (doar în ROM)
+                    Buffer.BlockCopy(r.Data, 0, nvs, o, 64);
+                }
+                for (int sct = 0; sct < nvs.Length; sct += 0x1000)           // citirea e corectă? (MD5 calculat de placă)
+                {
+                    var r = f.Command(CmdMd5, U32(NvsStart + sct, 0x1000, 0, 0), timeoutMs: 8000, payload: 32);
+                    bool same = System.Text.Encoding.ASCII.GetString(r.Data, 0, 32).Equals(Convert.ToHexString(MD5.HashData(nvs.AsSpan(sct, 0x1000))), StringComparison.OrdinalIgnoreCase);
+                    Console.WriteLine($"sector 0x{NvsStart + sct:X5}: citire {(same ? "corectă" : "GREȘITĂ")}");
+                }
+                f.HardReset();
+                var names = new Dictionary<int, string> { [0] = "(namespace)" };
+                var lines = new List<string>();
+                for (int page = 0; page < nvs.Length / 0x1000; page++)
+                {
+                    int pb = page * 0x1000;
+                    uint state = BinaryPrimitives.ReadUInt32LittleEndian(nvs.AsSpan(pb));
+                    uint seq = BinaryPrimitives.ReadUInt32LittleEndian(nvs.AsSpan(pb + 4));
+                    lines.Add($"pagina 0x{NvsStart + pb:X5}: stare 0x{state:X8} seq {seq}");
+                    for (int e = 0; e < 126; e++)
+                    {
+                        int st = nvs[pb + 32 + e / 4] >> (e % 4 * 2) & 3;
+                        if (st != 2) continue;                         // 2 = scris (3 gol, 0 șters)
+                        int eb = pb + 64 + e * 32;
+                        int ns = nvs[eb], type = nvs[eb + 1], span = nvs[eb + 2];
+                        string key = System.Text.Encoding.ASCII.GetString(nvs, eb + 8, 16).Split('\0')[0];
+                        if (ns == 0 && type == 0x01) names[nvs[eb + 24]] = key;
+                        string extra = type == 0x21 ? $" șir {BinaryPrimitives.ReadUInt16LittleEndian(nvs.AsSpan(eb + 24))} B" : $" tip 0x{type:X2}";
+                        lines.Add($"   ns {ns,3} {key,-16}{extra}");
+                        e += Math.Max(0, span - 1);
+                    }
+                }
+                foreach (var l in lines) Console.WriteLine(l);
+                Console.WriteLine("namespace-uri: " + string.Join(", ", names.Select(kv => $"{kv.Key}={kv.Value}")));
+                return 0;
+            }
+            if (args[3] == "erase-nvs")                // reparație: șterge doar zona de setări (placa pornește în SETUP)
+            {
+                f.Connect();
+                f.Command(CmdFlashBegin, U32(NvsEnd - NvsStart, 0, BlockSize, NvsStart), timeoutMs: 10_000);   // FLASH_BEGIN șterge zona
+                var ff = new byte[NvsEnd - NvsStart];
+                Array.Fill(ff, (byte)0xFF);
+                bool clean = f.FlashMd5(NvsStart, NvsEnd - NvsStart) == Convert.ToHexString(MD5.HashData(ff));
+                Console.WriteLine(clean ? "OK: zona de setări e ștearsă." : "EROARE: zona de setări nu e goală după ștergere.");
+                f.HardReset();
+                return clean ? 0 : 1;
             }
             if (args[3] == "probe")
             {
@@ -128,15 +183,23 @@ sealed class EspFlasher : IDisposable
     public void Flash(IReadOnlyList<Region> regions)
     {
         Connect();
+        // dacă nicio zonă nu atinge NVS-ul, verificăm că a rămas neatins (MD5 înainte și după, calculat de placă)
+        bool keepNvs = regions.All(r => r.Offset >= NvsEnd || r.Offset + r.Data.Length <= NvsStart);
+        string? nvsBefore = keepNvs ? FlashMd5(NvsStart, NvsEnd - NvsStart) : null;
         long total = regions.Sum(r => (long)r.Data.Length), done = 0;
         foreach (var r in regions)
         {
             WriteRegion(r, total, done);
             done += r.Data.Length;
         }
+        if (nvsBefore != null && FlashMd5(NvsStart, NvsEnd - NvsStart) != nvsBefore)
+            throw new IOException("firmware-ul e scris, dar zona de setări s-a modificat: verifică setările plăcii");
         status.Report("Gata, repornesc placa...");
         HardReset();
     }
+
+    string FlashMd5(int offset, int size) =>
+        System.Text.Encoding.ASCII.GetString(Command(CmdMd5, U32((uint)offset, (uint)size, 0, 0), timeoutMs: PerMb(size, 8_000), payload: 32).Data, 0, 32).ToUpperInvariant();
 
     void Connect()
     {
@@ -218,27 +281,24 @@ sealed class EspFlasher : IDisposable
     {
         byte[] data = r.Data;
         if (data.Length % 4 != 0) { Array.Resize(ref data, (data.Length + 3) & ~3); Array.Fill(data, (byte)0xFF, r.Data.Length, data.Length - r.Data.Length); }
-        byte[] packed;
-        using (var ms = new MemoryStream())
-        {
-            using (var z = new ZLibStream(ms, CompressionLevel.SmallestSize, leaveOpen: true)) z.Write(data);
-            packed = ms.ToArray();
-        }
-        int blocks = (packed.Length + BlockSize - 1) / BlockSize;
-        int eraseSize = (data.Length + BlockSize - 1) / BlockSize * BlockSize;
+        // Necomprimat (FLASH_BEGIN / FLASH_DATA). Varianta comprimată (FLASH_DEFL_*) are o problemă în ROM-ul ESP32: când o zonă
+        // are exact un multiplu de 32 KB (fereastra de decompresie), ROM-ul o mai scrie o dată imediat după ea, fără ștergere.
+        // Zona bootloader + partiții are fix 32 KB, deci se scria peste NVS (0x9000) și placa își pierdea setările.
+        int blocks = (data.Length + BlockSize - 1) / BlockSize;
         status.Report($"Șterg zona 0x{r.Offset:X5} ({data.Length / 1024} KB)...");
-        Command(CmdDeflBegin, U32((uint)eraseSize, (uint)blocks, BlockSize, (uint)r.Offset), timeoutMs: PerMb(eraseSize, 30_000));
+        Command(CmdFlashBegin, U32((uint)data.Length, (uint)blocks, BlockSize, (uint)r.Offset), timeoutMs: PerMb(data.Length, 30_000));
 
         for (int seq = 0; seq < blocks; seq++)
         {
-            int n = Math.Min(BlockSize, packed.Length - seq * BlockSize);
-            var pkt = new byte[16 + n];
-            BinaryPrimitives.WriteUInt32LittleEndian(pkt.AsSpan(0), (uint)n);
+            int n = Math.Min(BlockSize, data.Length - seq * BlockSize);
+            var pkt = new byte[16 + BlockSize];
+            BinaryPrimitives.WriteUInt32LittleEndian(pkt.AsSpan(0), BlockSize);
             BinaryPrimitives.WriteUInt32LittleEndian(pkt.AsSpan(4), (uint)seq);
-            Buffer.BlockCopy(packed, seq * BlockSize, pkt, 16, n);
+            Array.Fill(pkt, (byte)0xFF, 16, BlockSize);   // ultimul bloc completat cu 0xFF (scrierea de 0xFF nu schimbă flash-ul)
+            Buffer.BlockCopy(data, seq * BlockSize, pkt, 16, n);
             byte chk = 0xEF;
             for (int i = 16; i < pkt.Length; i++) chk ^= pkt[i];
-            Command(CmdDeflData, pkt, chk, timeoutMs: 10_000);
+            Command(CmdFlashData, pkt, chk, timeoutMs: 5_000);
             long doneBytes = before + (long)data.Length * (seq + 1) / blocks;
             if (seq % 16 == 0 || seq == blocks - 1) status.Report($"Scriu firmware-ul... {doneBytes * 100 / Math.Max(1, total)}%");
         }

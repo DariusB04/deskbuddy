@@ -81,6 +81,7 @@ Se deschide fereastra DeskBuddy, plus o iconiță în tray (punct verde = placa 
 **USB sau WiFi** (pagina PC → Conexiune): *Auto* trimite pe cablu când placa e legată la PC, altfel pe WiFi; mai sunt *Doar USB* și *Doar WiFi*.
 Pe USB merg ecranele PC, CLAUDE și CEAS (ora vine de la PC) și fără WiFi; VREME și IMPRIMANTA au nevoie de WiFi.
 Cu placa pe cablu, WiFi-ul ei se setează direct din aplicație (pagina PC → WiFi-ul plăcii): cauți rețelele, scrii parola, gata.
+Fără WiFi, pagina **Dispozitiv** deschide setările plăcii prin cablu, iar PC-ul ia în locul plăcii vremea și starea imprimantei. Setările rămân salvate pe placă, deci merg la fel și când îi dai WiFi.
 
 Temperatura CPU (Ryzen / Intel) cere **drepturi de admin** și driverul **PawnIO** (`winget install namazso.PawnIO` sau https://pawnio.eu).
 Fără ele merg load-ul CPU, RAM-ul și GPU-ul NVIDIA, iar pe ecran temperatura CPU apare `--`. Pagina PC arată ce lipsește.

@@ -28,19 +28,26 @@ sealed class UsbLink : IDisposable
     /// Ssid = rețeaua salvată pe placă; WifiStatus = WiFi.status() (1 rețeaua nu se vede, 4 conectare eșuată, 6 deconectat)
     public sealed record Board(string Port, string Version, string Variant, bool Wifi, string? Ip, string Ssid, int WifiStatus, bool Setup);
 
-    (string Prefix, TaskCompletionSource<string> Reply)? pending;
+    readonly List<(string Prefix, TaskCompletionSource<string> Reply)> pending = [];
+    int nextId;
 
-    /// trimite o comandă și așteaptă linia de răspuns care începe cu prefix (ex. {"scan")
+    /// placa cere ceva de la PC (fără WiFi): {"need":"wx"|"pr"|"http",...} (din thread-ul de fundal)
+    public event Action<string>? Need;
+
+    public int NextId() => Interlocked.Increment(ref nextId);
+
+    /// trimite o comandă și așteaptă linia de răspuns care începe cu prefix (ex. {"scan"); mai multe pot aștepta deodată
     public async Task<string?> RequestAsync(string json, string prefix, int timeoutMs)
     {
         var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-        lock (gate) pending = (prefix, tcs);
+        var entry = (prefix, tcs);
+        lock (gate) pending.Add(entry);
         try
         {
             if (!Send(System.Text.Encoding.UTF8.GetBytes(json))) return null;
             return await Task.WhenAny(tcs.Task, Task.Delay(timeoutMs)) == tcs.Task ? tcs.Task.Result : null;
         }
-        finally { lock (gate) if (pending?.Reply == tcs) pending = null; }
+        finally { lock (gate) pending.Remove(entry); }
     }
 
     readonly object gate = new();
@@ -166,7 +173,7 @@ sealed class UsbLink : IDisposable
         {
             try { Step(); }
             catch (Exception) { Close(); }
-            Thread.Sleep(board != null || probing != null ? 200 : 3000);
+            Thread.Sleep(pending.Count > 0 ? 20 : board != null || probing != null ? 200 : 3000);   // cu o cerere în așteptare: răspuns rapid
         }
     }
 
@@ -184,7 +191,8 @@ sealed class UsbLink : IDisposable
                     var sp = new SerialPort(c.Name, Baud)
                     {
                         DtrEnable = false, RtsEnable = false, Handshake = Handshake.None,
-                        ReadTimeout = 50, WriteTimeout = 1000, Encoding = Encoding.UTF8,
+                        ReadTimeout = 50, WriteTimeout = 3000, Encoding = Encoding.UTF8,
+                        ReadBufferSize = 1 << 16, WriteBufferSize = 1 << 16,   // pagina de setări vine pe o linie de ~13 KB
                     };
                     try { sp.Open(); }
                     catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
@@ -210,15 +218,24 @@ sealed class UsbLink : IDisposable
             if (got.Length > 0)
             {
                 rx.Append(got);
-                if (rx.Length > 8192) rx.Remove(0, rx.Length - 4096);
+                if (rx.Length > 1 << 18) rx.Remove(0, rx.Length - (1 << 17));
                 string all = rx.ToString();
                 int nl;
                 while ((nl = all.IndexOf('\n')) >= 0)
                 {
                     string line = all[..nl].Trim();
                     all = all[(nl + 1)..];
+                    if (line.Length == 0 || line[0] != '{') continue;          // mesajele de depanare ale plăcii
+                    if (board != null) lastReply = now;
                     if (line.StartsWith("{\"deskbuddy\"", StringComparison.Ordinal)) OnHello(line, now);
-                    else if (pending is { } p && line.StartsWith(p.Prefix, StringComparison.Ordinal)) p.Reply.TrySetResult(line);
+                    else if (line.StartsWith("{\"need\"", StringComparison.Ordinal))
+                    {
+                        var l = line;
+                        ThreadPool.QueueUserWorkItem(_ => Need?.Invoke(l));
+                    }
+                    else
+                        foreach (var p in pending)
+                            if (line.StartsWith(p.Prefix, StringComparison.Ordinal)) { p.Reply.TrySetResult(line); break; }
                 }
                 rx.Clear().Append(all);
             }
