@@ -16,7 +16,7 @@ Apăsare lungă: LED **AUTO** (slab noaptea) / **MAX** / **OFF**.
 deskbuddy/
 ├── pc/windows/   aplicația de Windows (C#, .NET 10): sursa; exe-ul vine din Releases
 ├── pc/           pc_stats_sender.py, claude_bridge.py (Linux)
-├── cad/          deskbuddy_cad.py – modelul parametric al carcasei (CadQuery)
+├── cad/          deskbuddy_cad.py – modelul parametric al carcasei (CadQuery); deskbuddy_v2_cad.py = carcasa v2
 └── stl/ step/    piesele carcasei
 ```
 
@@ -168,3 +168,28 @@ Sau importă `step/*.step` direct în Fusion 360.
 3. **Difuzorul + modulul LED**: pui difuzorul alb de sus în gaura din capac, apoi modulul cu LED-ul în jos pe cele 2 știfturi.
 4. **ESP32** cu **pinii în jos**: pe cei 4 stâlpi, cu USB-ul spre spate, peste modulul LED. Apeși la capătul cu USB-ul până face clic.
 5. Capacul intră în corp de jos, 4× M3×14.
+
+## 7. Carcasa v2
+
+O a doua carcasă, mai încăpătoare (50 × 78 × 60 mm), cu **LED-ul în buton** și **fără lipituri**: totul se leagă cu fire Dupont mamă-mamă. Prima carcasă rămâne neschimbată. Modelul e în `cad/deskbuddy_v2_cad.py`, iar piesele în `stl/v2/` și `step/v2/`.
+
+- **Butonul e difuzorul LED-ului**: un „puc” de Ø28 mm, printat din filament translucid. LED-ul stă dedesubt și îl luminează. Pucul e captiv (o flanșă sub top), ghidat pe 6 mm și se oprește pe un inel imediat după clic.
+- **ESP32 stă întors**, cu pinii în sus: mufele Dupont se pun de sus și au ~20 mm liberi deasupra.
+- **Cablaj**: butonul se poate lega pe GPIO27 + GPIO14 (GND „virtual”, din firmware 2.1.1), ca GND-urile plăcii să rămână pentru OLED și LED.
+
+| Piesă | Printare |
+|---|---|
+| `body` | topul pe pat, fără suporturi |
+| `lid` | ca în STL |
+| `oled_clamp` | ca în STL |
+| `button_cap` | fața de sus pe pat; PLA/PETG translucid, umplere 100% concentric, lent |
+| `button_mount` | ca în STL |
+| `fit_test_button` | bucata din top cu gaura și bosajele: testezi butonul (~20 min) înainte de corp |
+
+**Asamblare**
+1. **Buton**: switch-ul 12×12 intră în cele 4 colțare din `button_mount`, iar plăcuța KY-016 se prinde cu clic pe cele 2 știfturi de dedesubt, cu LED-ul în sus și pinii spre spate. Mufele de pe cele 2 picioare cu contact (pe diagonală) intră prin ferestrele din suport până la corpul switch-ului. Pui pucul în gaura din top, apoi suportul dedesubt, cu 2× M3×14.
+2. **OLED**: ca la prima carcasă, cu bara `oled_clamp` și 2× M3×14.
+3. **ESP32**: pinii în sus, USB-ul spre spate, pe cei 4 stâlpi din capac (clic la capătul cu USB-ul). Legi toate firele pe pini.
+4. Capacul intră în corp de jos, 4× M3×14.
+
+Hardware: **8× M3×14**.
