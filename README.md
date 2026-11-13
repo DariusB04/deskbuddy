@@ -37,7 +37,7 @@ Firmware-ul plăcii se instalează din **[Releases](../../releases)** (sursa lui
 | OLED 128x64 I2C | VCC / GND | 3V3 / GND |
 | | SDA / SCL | GPIO21 / GPIO22 |
 | Buton tactil 12×12 (4 picioare) | un picior | GPIO27 |
-| | piciorul **opus pe diagonală** | GND |
+| | piciorul **opus pe diagonală** | GND sau GPIO14 (lângă GPIO27; placa îl ține pe 0) |
 | Modul LED KY-016 | `-` | GND |
 | | R / G / B | GPIO25 / 26 / 33 |
 
