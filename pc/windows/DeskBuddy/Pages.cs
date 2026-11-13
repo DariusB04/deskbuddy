@@ -61,6 +61,7 @@ sealed class PcPage : Page
 {
     readonly TrayApp app;
     readonly MetricBar cpu = new("CPU"), gpu = new("GPU"), ram = new("RAM");
+    readonly Label game = Theme.Label("");
     readonly Label device = Theme.Label("");
     readonly Label targets = Note("");
     readonly TextBox host = Theme.TextBox();
@@ -68,14 +69,6 @@ sealed class PcPage : Page
     readonly Label tempState = Theme.Label("");
     readonly Button tempFix = Theme.Button("", primary: true);
     readonly ComboBox link = Theme.Combo(330);
-    readonly Card wifiCard;
-    readonly Label wifiState = Theme.Label("");
-    readonly ComboBox wifiSsid = Theme.Combo(260);
-    readonly TextBox wifiPass = Theme.TextBox();
-    readonly Button wifiScan = Theme.Button("Caută rețele");
-    readonly Button wifiSave = Theme.Button("Salvează pe placă", primary: true);
-    readonly Label wifiInfo = Note("");
-    bool wifiBusy;
     static readonly (LinkMode Mode, string Text)[] LinkModes =
     [
         (LinkMode.Auto, "Auto: USB dacă e conectată prin cablu, altfel WiFi"),
@@ -87,7 +80,7 @@ sealed class PcPage : Page
     {
         this.app = app;
         var now = AddCard("Acum");
-        now.Controls.AddRange([cpu, gpu, ram]);
+        now.Controls.AddRange([cpu, gpu, ram, game]);
 
         var conn = AddCard("Conexiune");
         foreach (var (_, text) in LinkModes) link.Items.Add(text);
@@ -102,8 +95,8 @@ sealed class PcPage : Page
         conn.Controls.Add(targets);
         conn.Controls.Add(Note("Pe USB merg ecranele PC, CLAUDE și CEAS (ora vine de la PC) și fără WiFi; VREME și IMPRIMANTA cer WiFi. " +
                                "Cât timp aplicația folosește portul USB, Serial Monitor din Arduino nu se poate conecta: alege „Doar WiFi”."));
-        conn.Controls.Add(Note("IP-ul plăcii: gol = broadcast pe toate rețelele PC-ului și căutare automată (deskbuddy.local). " +
-                               "Scrie-l doar dacă routerul blochează broadcast-ul. Îl vezi pe ecranul PC al plăcii."));
+        conn.Controls.Add(Note("IP-ul plăcii: gol = o găsim singuri (broadcast și semnalele trimise de placă). " +
+                               "Scrie-l doar dacă n-o găsim. Îl vezi pe ecranul PC al plăcii."));
         host.Width = 220;
         host.PlaceholderText = "ex. 192.168.1.77";
         host.Text = app.Settings.Host;
@@ -122,52 +115,7 @@ sealed class PcPage : Page
         hostError.Visible = false;
         conn.Controls.Add(hostError);
 
-        wifiCard = AddCard("WiFi-ul plăcii (prin USB)");
-        wifiCard.Controls.Add(wifiState);
-        wifiCard.Controls.Add(Note("Placa e legată prin cablu, deci îi poți da WiFi-ul de aici, fără telefon. Parola pleacă doar pe cablu, la placă."));
-        wifiSsid.DropDownStyle = ComboBoxStyle.DropDown;     // se poate scrie și o rețea ascunsă
-        wifiPass.Width = 200;
-        wifiPass.UseSystemPasswordChar = true;
-        wifiPass.PlaceholderText = "parola WiFi";
-        int wpad = Math.Max(0, (wifiSave.GetPreferredSize(Size.Empty).Height - wifiPass.PreferredHeight) / 2);
-        wifiPass.Margin = new Padding(0, wifiSave.Margin.Top + wpad, 8, 0);
-        wifiCard.Controls.Add(Theme.Row(wifiSsid, wifiScan));
-        wifiCard.Controls.Add(Theme.Row(wifiPass, wifiSave));
-        wifiCard.Controls.Add(wifiInfo);
-        wifiCard.Visible = false;
-        wifiScan.Click += async (_, _) =>
-        {
-            if (wifiBusy) return;
-            wifiBusy = true;
-            wifiScan.Enabled = false;
-            wifiInfo.Text = "Placa caută rețele (câteva secunde)...";
-            wifiInfo.ForeColor = Theme.Muted;
-            var nets = await app.UsbScanWifiAsync();
-            wifiBusy = false;
-            wifiScan.Enabled = true;
-            if (IsDisposed) return;
-            if (nets == null) { wifiInfo.Text = "Placa n-a răspuns. E conectată prin USB?"; wifiInfo.ForeColor = Theme.Bad; return; }
-            string keep = wifiSsid.Text;
-            wifiSsid.Items.Clear();
-            foreach (var n in nets) wifiSsid.Items.Add(n.Ssid);
-            wifiSsid.Text = keep.Length > 0 ? keep : nets.FirstOrDefault().Ssid ?? "";
-            wifiInfo.Text = nets.Count == 0 ? "Nicio rețea găsită (placa vede doar 2.4 GHz)." :
-                string.Join(" · ", nets.Take(6).Select(n => $"{n.Ssid} {Bars(n.Rssi)}{(n.Locked ? "" : " (deschisă)")}"));
-        };
-        wifiSave.Click += async (_, _) =>
-        {
-            string ssid = wifiSsid.Text.Trim();
-            if (ssid.Length == 0) { wifiInfo.Text = "Alege rețeaua."; wifiInfo.ForeColor = Theme.Bad; return; }
-            wifiSave.Enabled = false;
-            bool ok = await app.UsbSaveWifiAsync(ssid, wifiPass.Text);
-            wifiSave.Enabled = true;
-            if (IsDisposed) return;
-            wifiPass.Text = "";
-            wifiInfo.Text = ok ? $"Salvat. Placa repornește și se conectează la {ssid} (~10 s)." : "Placa n-a confirmat. E conectată prin USB?";
-            wifiInfo.ForeColor = ok ? Theme.Accent : Theme.Bad;
-        };
-
-        var temp = AddCard("Temperatura CPU");
+                var temp = AddCard("Temperatura CPU");
         temp.Controls.Add(tempState);
         temp.Controls.Add(tempFix);
         tempFix.Click += (_, _) =>
@@ -177,7 +125,6 @@ sealed class PcPage : Page
         };
     }
 
-    static string Bars(int rssi) => rssi > -60 ? "▂▄▆█" : rssi > -70 ? "▂▄▆" : rssi > -80 ? "▂▄" : "▂";
 
     public override void RefreshData()
     {
@@ -195,27 +142,12 @@ sealed class PcPage : Page
             cpu.Set($"{T(s.CpuT)} · {P(s.CpuL)}", s.CpuL, Theme.TempColor(s.CpuT), "temperatură · load");
             gpu.Set($"{T(s.GpuT)} · {P(s.GpuL)}", s.GpuL, Theme.TempColor(s.GpuT), "temperatură · load");
             string used = s.RamU is float u && s.RamT is float t ? string.Create(CultureInfo.InvariantCulture, $"{u:0.0} / {t:0} GB · ") : "";
-            ram.Set(used + P(s.RamL), s.RamL, Theme.Accent, app.Game is { } g ? "joc: " + g : "");
+            ram.Set(used + P(s.RamL), s.RamL, Theme.Accent);
+            game.Text = app.Game is { } g ? $"Joc: {g} · " + (app.Fps is float fp ? $"{fp:0} FPS" : app.FpsError ?? "FPS: -- (jocul nu folosește DirectX?)") : "Niciun joc pornit.";
+            game.ForeColor = app.Game != null ? Theme.Fg : Theme.Muted;
         }
 
         var mode = app.Settings.Link;
-        wifiCard.Visible = app.UsbBoard != null;
-        if (app.UsbBoard is { } wb)
-        {
-            if (wb.Wifi) { wifiState.Text = $"Conectată la {wb.Ssid}" + (wb.Ip != null ? $" ({wb.Ip})" : ""); wifiState.ForeColor = Theme.Accent; }
-            else if (wb.Ssid.Length == 0) { wifiState.Text = "Nicio rețea WiFi salvată pe placă."; wifiState.ForeColor = Theme.Warn; }
-            else
-            {
-                wifiState.Text = $"Rețeaua salvată: {wb.Ssid}, dar placa nu se conectează" + wb.WifiStatus switch
-                {
-                    1 => " (n-o vede: e prea departe sau e doar 5 GHz?).",
-                    4 => " (conectarea a eșuat: parola greșită?).",
-                    _ => ".",
-                };
-                wifiState.ForeColor = Theme.Warn;
-            }
-            if (wifiSsid.Text.Length == 0 && wb.Ssid.Length > 0) wifiSsid.Text = wb.Ssid;
-        }
         if (app.SendingOverUsb && app.UsbBoard is { } ub)
         {
             device.Text = $"DeskBuddy pe USB: {ub.Port} · firmware {ub.Version}" + (ub.Ip != null ? $" · WiFi {ub.Ip}" : " · fără WiFi");
@@ -226,13 +158,22 @@ sealed class PcPage : Page
         {
             device.Text = "DeskBuddy negăsit pe USB";
             device.ForeColor = Theme.Warn;
-            targets.Text = "Conectează placa prin cablu (firmware 1.2.0 sau mai nou). Pe WiFi nu trimit nimic în modul ăsta.";
+            targets.Text = "Conectează placa prin cablu. Pe WiFi nu trimit nimic în modul ăsta.";
         }
         else
         {
-            device.Text = app.Device is { } ip ? $"DeskBuddy: {ip}" : "DeskBuddy negăsit (trimit oricum broadcast)";
-            device.ForeColor = app.Device != null ? Theme.Accent : Theme.Warn;
-            targets.Text = "Trimit pe WiFi la: " + (app.Targets.Count > 0 ? string.Join(", ", app.Targets) : "...") + $"  (UDP {UdpSender.Port})";
+            if (app.WifiBoard is { } wb && app.WifiEndpoint is { } ep)
+            {
+                device.Text = $"DeskBuddy pe WiFi: {wb.Ip} · firmware {wb.Version}" + (app.WifiDirect ? "" : " · prin router");
+                device.ForeColor = Theme.Accent;
+                targets.Text = $"Trimit direct la placă: {ep}";
+            }
+            else
+            {
+                device.Text = "DeskBuddy negăsit pe WiFi (trimit oricum broadcast)";
+                device.ForeColor = Theme.Warn;
+                targets.Text = "Broadcast la: " + (app.Targets.Count > 0 ? string.Join(", ", app.Targets) : "...") + $"  (UDP {UdpSender.Port})";
+            }
         }
 
         if (s != null && s.CpuT != null)

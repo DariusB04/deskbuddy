@@ -4,6 +4,8 @@ using System.Drawing.Drawing2D;
 using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace DeskBuddy;
 
@@ -16,28 +18,37 @@ sealed class TrayApp : ApplicationContext
     public AppSettings Settings { get; } = AppSettings.Load();
     public Stats? Latest { get; private set; }                     // ultima citire (pe thread-ul UI)
     public bool Quitting { get; private set; }
-    public IReadOnlyList<IPAddress> Targets => udp.Targets;
+    public IReadOnlyList<IPAddress> Targets => wifi.BroadcastTargets;
     public Icon WindowIcon => (Icon)(currentIcon ?? MakeIcon(Color.Gray)).Clone();
     /// pe thread-ul UI, după fiecare citire (o dată pe secundă)
     public event Action? Updated;
 
     /// IP-ul plăcii: cel setat de mână, cel găsit prin deskbuddy.local sau cel spus de placă pe USB
-    public IPAddress? Device => Settings.HostIp ?? resolved ?? (usb.Connected?.Ip is { } uip && IPAddress.TryParse(uip, out var a) ? a : null);
+    public IPAddress? Device => Settings.HostIp ?? wifi.BoardIp ?? (usb.Connected?.Ip is { } uip && IPAddress.TryParse(uip, out var a) ? a : null);
 
     /// placa pe USB (null = nu e conectată prin cablu sau are firmware fără USB)
     public UsbLink.Board? UsbBoard => usb.Connected;
     /// pe unde pleacă acum datele
     public bool SendingOverUsb => Settings.Link != LinkMode.Wifi && usb.Connected != null;
     /// placa e conectată la PC (USB sau găsită în rețea)
-    public bool DeviceFound => Device != null || usb.Connected != null;
-    public string? DeviceUrl => Device is { } ip ? $"http://{ip}/" : null;
+    public bool DeviceFound => usb.Connected != null || wifi.Connected != null;
+    /// pagina plăcii prin HTTP: doar dacă placa e în aceeași rețea cu PC-ul (sau IP-ul e setat de mână)
+    public string? DeviceUrl => Settings.HostIp is { } h ? $"http://{h}/" : wifi.Direct && wifi.BoardIp is { } ip ? $"http://{ip}/" : null;
+    /// placa pe WiFi (din heartbeat sau din căutare)
+    public UsbLink.Board? WifiBoard => wifi.Connected;
+    public IPEndPoint? WifiEndpoint => wifi.Endpoint;
+    public bool WifiDirect => wifi.Direct;
+    public string? WifiError => wifi.Error;
+    public string? FpsError => fps.Error;
+    public float? Fps { get; private set; }
 
     readonly NotifyIcon tray;
     readonly ContextMenuStrip menu = new();
     readonly ToolStripMenuItem miStats = new() { Enabled = false };
     readonly WindowsFormsSynchronizationContext ui;
-    readonly UdpSender udp = new();
     readonly UsbLink usb = new();
+    readonly WifiLink wifi = new();
+    readonly FpsMonitor fps = new();
     readonly GameDetector games = new();
     /// jocul pornit acum (null = niciunul)
     public string? Game { get; private set; }
@@ -48,8 +59,7 @@ sealed class TrayApp : ApplicationContext
     MainForm? form;
     Sensors? sensors;
     int busy;
-    long usageAt = -60_000, deviceAt = -60_000, timeAt = -60_000;   // „demult”: prima bifă le face imediat
-    volatile IPAddress? resolved;
+    long usageAt = -60_000, timeAt = -60_000;   // „demult”: prima bifă le face imediat
     Health health = Health.Starting;
     Icon? currentIcon;
     bool trayHintShown;
@@ -63,15 +73,10 @@ sealed class TrayApp : ApplicationContext
     public string? UpdateError { get; private set; }
     public string? PrivateError { get; private set; }
     /// placa: null = nu răspunde; Version "" = firmware vechi (fără /api/version)
-    DeviceFirmware.Board? wifiBoard;
-    /// versiunea plăcii: din pagina ei (WiFi) sau, fără WiFi, de pe USB
-    public DeviceFirmware.Board? Board
-    {
-        get => wifiBoard ?? (usb.Connected is { } u ? new DeviceFirmware.Board(u.Version, u.Variant) : null);
-        private set => wifiBoard = value;
-    }
+    /// versiunea plăcii: de pe USB sau de pe WiFi (răspunsul ei la „hi” / heartbeat)
+    public DeviceFirmware.Board? Board => (usb.Connected ?? wifi.Connected) is { } b ? new DeviceFirmware.Board(b.Version, b.Variant) : null;
     public string? BoardVersion => Board?.Version;
-    public bool BoardViaUsb => wifiBoard == null && usb.Connected != null;
+    public bool BoardViaUsb => usb.Connected != null;
     public bool AppUpdateAvailable => Release?.App != null && Release.Version > Updater.Current;
 
     /// firmware-ul plăcii se ia din același loc din care a venit: "full" din repo-ul privat, "public" din cel public;
@@ -106,8 +111,11 @@ sealed class TrayApp : ApplicationContext
         usb.Changed += () =>
         {
             timeAt = -60_000;                         // ora pleacă imediat pe USB
+            if (usb.Connected != null) usb.Send(System.Text.Encoding.UTF8.GetBytes(
+                new System.Text.Json.Nodes.JsonObject { ["t"] = "pcip", ["a"] = string.Join(',', LocalIps().Take(3)) }.ToJsonString()));
             ui.Post(_ => { if (!Quitting) Updated?.Invoke(); }, null);
         };
+        wifi.Changed += () => ui.Post(_ => { if (!Quitting) Updated?.Invoke(); }, null);
         relay = Relay.Listen(Route);
         needs = new BoardNeeds(usb.Send);             // vremea / imprimanta / login-ul Bambu pentru placa fără WiFi
         usb.Need += needs.Handle;
@@ -171,8 +179,7 @@ sealed class TrayApp : ApplicationContext
         Settings.Host = host;
         Settings.Save();
         UdpSender.HostOverride = Settings.HostIp;
-        udp.ResetTargets();
-        deviceAt = -60_000;                           // caută din nou acum
+        wifi.ResetTargets();                          // caută din nou acum
     }
 
     public Task SendClaudeTestAsync() => Task.Run(() => ClaudeBridge.Test(Route));
@@ -199,9 +206,59 @@ sealed class TrayApp : ApplicationContext
         var json = new System.Text.Json.Nodes.JsonObject { ["t"] = "wifi", ["ssid"] = ssid, ["pass"] = password }.ToJsonString();
         string? reply = await usb.RequestAsync(json, "{\"wifi_saved\"", 5000);
         if (reply?.Contains("true") != true) return false;
-        resolved = null;                              // IP-ul se poate schimba
-        deviceAt = -60_000;
         return true;
+    }
+
+    // ------------------------------------------------------------ setările plăcii (fără browser): aceleași /api/... ca pagina ei
+    /// cerere la placă, pe USB dacă e pe cablu, altfel pe WiFi (cu parola paginii, dacă are). Întoarce JSON-ul răspunsului.
+    public async Task<JsonNode?> ApiAsync(string path, IDictionary<string, string>? args = null, int timeoutMs = 9000)
+    {
+        int id = usb.NextId();
+        var a = new JsonObject();
+        if (args != null) foreach (var (k, v) in args) a[k] = v;
+        var req = new JsonObject { ["t"] = "req", ["id"] = id, ["p"] = path, ["a"] = a };
+        string prefix = $"{{\"res\":{id},";
+        string? res;
+        if (usb.Connected != null) res = await usb.RequestAsync(req.ToJsonString(), prefix, timeoutMs);
+        else if (wifi.Connected != null)
+        {
+            if (Settings.BoardPassword is { Length: > 0 } pw) req["pw"] = pw;
+            res = await wifi.RequestAsync(req.ToJsonString(), prefix, timeoutMs);
+        }
+        else throw new IOException("Placa nu e conectată (nici pe USB, nici pe WiFi).");
+        if (res == null) throw new TimeoutException("Placa n-a răspuns.");
+        using var d = JsonDocument.Parse(res);
+        int code = d.RootElement.GetProperty("c").GetInt32();
+        string body = d.RootElement.GetProperty("b").GetString() ?? "";
+        if (code == 401) throw new UnauthorizedAccessException("Placa cere parola paginii.");
+        if (code != 200) throw new IOException($"Placa a răspuns cu {code}.");
+        return JsonNode.Parse(body);
+    }
+
+    /// IP-urile PC-ului în rețelele locale (pentru heartbeat-ul plăcii): întâi cele cu gateway
+    public static List<string> LocalIps()
+    {
+        var list = new List<(string Ip, bool Gw)>();
+        try
+        {
+            foreach (var ni in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (ni.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                if (ni.NetworkInterfaceType is System.Net.NetworkInformation.NetworkInterfaceType.Loopback or System.Net.NetworkInformation.NetworkInterfaceType.Tunnel) continue;
+                var props = ni.GetIPProperties();
+                bool gw = props.GatewayAddresses.Any(g => g.Address.AddressFamily == AddressFamily.InterNetwork && !g.Address.Equals(IPAddress.Any));
+                foreach (var ua in props.UnicastAddresses)
+                {
+                    if (ua.Address.AddressFamily != AddressFamily.InterNetwork) continue;
+                    var b = ua.Address.GetAddressBytes();
+                    if (b[0] == 169 && b[1] == 254) continue;
+                    if (ua.PrefixLength >= 31) continue;
+                    list.Add((ua.Address.ToString(), gw));
+                }
+            }
+        }
+        catch (System.Net.NetworkInformation.NetworkInformationException) { }
+        return list.OrderByDescending(x => x.Gw).Select(x => x.Ip).Distinct().ToList();
     }
 
     public void SetLinkMode(LinkMode mode)
@@ -216,7 +273,7 @@ sealed class TrayApp : ApplicationContext
     {
         var mode = Settings.Link;
         if (mode != LinkMode.Wifi && usb.Send(data)) return;
-        if (mode != LinkMode.Usb) udp.Send(data);
+        if (mode != LinkMode.Usb) wifi.Send(data);
     }
 
     // ------------------------------------------------------------ flash prin USB
@@ -243,83 +300,6 @@ sealed class TrayApp : ApplicationContext
             return "Flash eșuat: " + e.Message;
         }
         finally { usb.Resume(); }
-    }
-
-    // ------------------------------------------------------------ pagina plăcii prin USB (pagina Dispozitiv, fără WiFi)
-    public const string UsbPageUrl = "http://deskbuddy.usb/";
-    (string Key, byte[] Html)? pageCache;
-
-    /// o cerere a paginii deschise la http://deskbuddy.usb/ -> placa, pe cablu: pagina însăși, /api/* sau upload-ul de firmware
-    public async Task<(int Code, string Type, byte[] Body)> UsbFetchAsync(string method, string path, string query, string contentType, byte[]? body)
-    {
-        static (int, string, byte[]) Json(int code, string json) => (code, "application/json", System.Text.Encoding.UTF8.GetBytes(json));
-        var board = usb.Connected;
-        if (path is "/" or "/index.html")
-        {
-            if (board == null)                         // repornește (după salvare): reîncercăm singuri
-                return (200, "text/html; charset=utf-8", System.Text.Encoding.UTF8.GetBytes(
-                    "<!doctype html><meta http-equiv=refresh content=3><body style='background:#0f1210;color:#8d998f;font:15px Segoe UI;" +
-                    "display:grid;place-items:center;height:90vh'>Aștept placa pe USB...</body>"));
-            string key = board.Version + "|" + board.Variant;
-            if (pageCache?.Key != key)
-            {
-                string? line = await usb.RequestAsync("{\"t\":\"page\"}", "{\"page\"", 10_000);
-                if (line == null) return (504, "text/plain; charset=utf-8", System.Text.Encoding.UTF8.GetBytes("Placa n-a trimis pagina."));
-                using var d = System.Text.Json.JsonDocument.Parse(line);
-                byte[] gz = Convert.FromBase64String(d.RootElement.GetProperty("page").GetString() ?? "");
-                using var unz = new System.IO.Compression.GZipStream(new MemoryStream(gz), System.IO.Compression.CompressionMode.Decompress);
-                using var ms = new MemoryStream();
-                await unz.CopyToAsync(ms);
-                pageCache = (key, ms.ToArray());
-            }
-            return (200, "text/html; charset=utf-8", pageCache.Value.Html);
-        }
-        if (board == null) return Json(503, "{\"ok\":false,\"err\":\"Placa nu e pe USB.\"}");
-
-        if (path == "/api/update")                    // upload-ul din pagină: îl scriem prin USB, cu bootloader-ul
-        {
-            byte[]? bin = body != null ? MultipartFile(contentType, body) : null;
-            if (bin == null || !DeviceFirmware.LooksLikeApp(bin)) return Json(200, "{\"ok\":false,\"err\":\"Fișierul nu e un firmware ESP32 (DeskBuddy.ino.bin).\"}");
-            string? err = await WriteFlashAsync(board.Port, EspFlasher.PlanApp(bin), new Progress<string>(_ => { }));
-            return err == null ? Json(200, $"{{\"ok\":true,\"kb\":{bin.Length / 1024}}}")
-                               : Json(200, System.Text.Json.JsonSerializer.Serialize(new { ok = false, err }));
-        }
-
-        if (!path.StartsWith("/api/", StringComparison.Ordinal)) return (404, "text/plain", System.Text.Encoding.UTF8.GetBytes("404"));
-        var args = new System.Text.Json.Nodes.JsonObject();
-        void Add(string? text)
-        {
-            if (string.IsNullOrEmpty(text)) return;
-            var q = System.Web.HttpUtility.ParseQueryString(text);
-            foreach (string? k in q.AllKeys) if (k != null) args[k] = q[k] ?? "";
-        }
-        Add(query.TrimStart('?'));
-        if (body != null && contentType.StartsWith("application/x-www-form-urlencoded", StringComparison.OrdinalIgnoreCase))
-            Add(System.Text.Encoding.UTF8.GetString(body));
-        int id = usb.NextId();
-        var req = new System.Text.Json.Nodes.JsonObject { ["t"] = "req", ["id"] = id, ["p"] = path, ["a"] = args };
-        string? res = await usb.RequestAsync(req.ToJsonString(), $"{{\"res\":{id},", 30_000);   // login-ul Bambu poate dura ~20 s
-        if (res == null) return Json(504, "{\"ok\":false,\"err\":\"Placa n-a răspuns pe USB.\"}");
-        using var r = System.Text.Json.JsonDocument.Parse(res);
-        var root = r.RootElement;
-        return (root.GetProperty("c").GetInt32(), root.GetProperty("ty").GetString() ?? "text/plain",
-                System.Text.Encoding.UTF8.GetBytes(root.GetProperty("b").GetString() ?? ""));
-    }
-
-    /// primul fișier dintr-un corp multipart/form-data
-    static byte[]? MultipartFile(string contentType, byte[] body)
-    {
-        int bi = contentType.IndexOf("boundary=", StringComparison.OrdinalIgnoreCase);
-        if (bi < 0) return null;
-        byte[] boundary = System.Text.Encoding.ASCII.GetBytes("\r\n--" + contentType[(bi + 9)..].Trim('"', ' '));
-        byte[] headEnd = "\r\n\r\n"u8.ToArray();
-        int start = body.AsSpan().IndexOf("filename="u8);
-        if (start < 0) return null;
-        int h = body.AsSpan(start).IndexOf(headEnd);
-        if (h < 0) return null;
-        int dataStart = start + h + headEnd.Length;
-        int end = body.AsSpan(dataStart).IndexOf(boundary);
-        return end < 0 ? null : body[dataStart..(dataStart + end)];
     }
 
     public async Task<string> FlashUsbAsync(string portName, UsbFlashKind kind, string? localFile, IProgress<string> status)
@@ -372,18 +352,12 @@ sealed class TrayApp : ApplicationContext
         if (DateTime.Now >= nextFirmwareCheck)
         {
             nextFirmwareCheck = DateTime.Now.AddMinutes(10);
-            await RefreshDeviceFirmwareAsync();
         }
         if (Settings.AutoUpdateCheck && DateTime.Now >= nextUpdateCheck)
         {
             nextUpdateCheck = DateTime.Now.AddHours(24);
             await CheckUpdatesAsync(manual: false);
         }
-    }
-
-    public async Task RefreshDeviceFirmwareAsync()
-    {
-        Board = DeviceUrl is { } url ? await DeviceFirmware.GetVersionAsync(url) : null;
     }
 
     public async Task CheckUpdatesAsync(bool manual)
@@ -420,7 +394,6 @@ sealed class TrayApp : ApplicationContext
         else PrivateRelease = null;
 
         LastUpdateCheck = DateTime.Now;
-        if (DeviceUrl != null) await RefreshDeviceFirmwareAsync();
         if (manual || Quitting) return;
         bool app = AppUpdateAvailable, fw = FirmwareUpdateAvailable;
         string key = $"{Release?.Version}|{FirmwareRelease?.Version}";
@@ -490,7 +463,6 @@ sealed class TrayApp : ApplicationContext
         for (int i = 0; i < 30; i++)                  // până la ~60 s
         {
             await Task.Delay(2000);
-            Board = await DeviceFirmware.GetVersionAsync(url);
             if (Board?.Version == want) return (DeviceFirmware.Result.Ok, $"Gata: placa rulează firmware-ul {want}.");
         }
         return (DeviceFirmware.Result.Ok, "Firmware urcat, dar placa n-a răspuns încă după repornire. Verifică peste un minut.");
@@ -521,7 +493,8 @@ sealed class TrayApp : ApplicationContext
         relay?.Dispose();
         needs.Dispose();
         usb.Dispose();
-        udp.Dispose();
+        wifi.Dispose();
+        fps.Dispose();
         ExitThread();
     }
 
@@ -534,7 +507,9 @@ sealed class TrayApp : ApplicationContext
             sensors ??= new Sensors();                 // prima deschidere poate dura câteva secunde
             var s = sensors.Read();
             Game = games.Current();
-            Route(s.ToPacket(Game));
+            var f = games.CurrentPid is int gpid ? fps.For(gpid) : null;
+            Fps = f?.Fps;
+            Route(s.ToPacket(Game, f?.Fps, f?.FrameMs));
             long now = Environment.TickCount64;
             if (now - usageAt > 30_000)
             {
@@ -545,11 +520,6 @@ sealed class TrayApp : ApplicationContext
             {
                 timeAt = now;
                 usb.Send(System.Text.Encoding.UTF8.GetBytes($"{{\"t\":\"tm\",\"s\":{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}}}"));
-            }
-            if (now - deviceAt > 30_000)
-            {
-                deviceAt = now;
-                _ = ResolveDeviceAsync();
             }
             ui.Post(_ =>
             {
@@ -566,19 +536,6 @@ sealed class TrayApp : ApplicationContext
             ui.Post(_ => { if (!Quitting) SetHealth(Health.Error); }, null);
         }
         finally { Volatile.Write(ref busy, 0); }
-    }
-
-    async Task ResolveDeviceAsync()
-    {
-        if (Settings.HostIp != null) return;          // IP setat de mână
-        try
-        {
-            var lookup = Dns.GetHostAddressesAsync("deskbuddy.local");
-            if (await Task.WhenAny(lookup, Task.Delay(4000)) == lookup)
-                resolved = lookup.Result.FirstOrDefault(a => a.AddressFamily == AddressFamily.InterNetwork);
-            else resolved = null;
-        }
-        catch (Exception) { resolved = null; }
     }
 
     static void Shell(string target)

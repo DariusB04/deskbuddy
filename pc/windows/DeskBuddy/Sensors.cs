@@ -9,10 +9,15 @@ namespace DeskBuddy;
 sealed record Stats(float? CpuT, float? CpuL, float? GpuT, float? GpuL, float? RamL, float? RamU, float? RamT)
 {
     /// Același format ca pc_stats_sender.py (cheile pe care le citește firmware-ul în handleUdp).
-    public byte[] ToPacket(string? game = null)
+    public byte[] ToPacket(string? game = null, float? fps = null, float? frameMs = null)
     {
         var o = new JsonObject();
-        if (!string.IsNullOrEmpty(game)) o["g"] = game;        // jocul pornit (placa sare pe ecranul PC)
+        if (!string.IsNullOrEmpty(game))                       // jocul pornit (placa sare pe ecranul PC) + FPS-ul lui
+        {
+            o["g"] = game;
+            if (fps is float f && float.IsFinite(f)) o["fps"] = Math.Round(f);
+            if (frameMs is float ft && float.IsFinite(ft)) o["ft"] = Math.Round(ft, 1);
+        }
         void Add(string k, float? v) { if (v is float f && float.IsFinite(f)) o[k] = Math.Round(f, 1); }
         Add("ct", CpuT); Add("cl", CpuL);
         Add("gt", GpuT); Add("gl", GpuL);

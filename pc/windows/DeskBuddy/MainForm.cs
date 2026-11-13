@@ -1,6 +1,6 @@
 namespace DeskBuddy;
 
-/// Fereastra DeskBuddy: meniu în stânga (Dispozitiv / PC / Claude Code / Aplicație), pagina aleasă în dreapta.
+/// Fereastra DeskBuddy: meniu în stânga (Acasă / Placă / PC / Claude Code / Aplicație), pagina aleasă în dreapta.
 /// X o ascunde în tray (setare); aplicația continuă să trimită datele.
 sealed class MainForm : Form
 {
@@ -9,7 +9,6 @@ sealed class MainForm : Form
     readonly FlowLayoutPanel navList = new() { FlowDirection = FlowDirection.TopDown, WrapContents = false, Dock = DockStyle.Top, AutoSize = true, BackColor = Theme.Nav };
     readonly Label navStatus = Theme.Label("", Theme.Small, Theme.Muted);
     readonly List<(NavButton Btn, Control Page)> pages = [];
-    readonly DevicePage devicePage;
     int current = -1;
 
     public MainForm(TrayApp app)
@@ -40,8 +39,8 @@ sealed class MainForm : Form
         Controls.Add(content);                        // Fill întâi, ca să ia ce rămâne după meniul din stânga
         Controls.Add(nav);
 
-        devicePage = new DevicePage(app);
-        AddPage("Dispozitiv", devicePage);
+        AddPage("Acasă", new HomePage(app));
+        AddPage("Placă", new BoardPage(app));
         AddPage("PC", new PcPage(app));
         AddPage("Claude Code", new ClaudePage(app));
         AddPage("Aplicație", new AppPage(app));
@@ -82,16 +81,20 @@ sealed class MainForm : Form
         }
         switch (pages[index].Page)
         {
-            case DevicePage d: d.Activate(); break;
             case Page p: p.OnShown(); break;
         }
     }
 
     void OnUpdated()
     {
-        if (app.Device is { } ip)
+        if (app.UsbBoard is { } ub)
         {
-            navStatus.Text = $"● DeskBuddy: {ip}";
+            navStatus.Text = $"● pe USB ({ub.Port})";
+            navStatus.ForeColor = Theme.Accent;
+        }
+        else if (app.WifiBoard is { } wb)
+        {
+            navStatus.Text = $"● pe WiFi ({wb.Ip})";
             navStatus.ForeColor = Theme.Accent;
         }
         else
@@ -102,7 +105,6 @@ sealed class MainForm : Form
         if (!Visible || current < 0) return;
         switch (pages[current].Page)
         {
-            case DevicePage d: d.DeviceChanged(); break;
             case Page p: p.RefreshData(); break;
         }
     }

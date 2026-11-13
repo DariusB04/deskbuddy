@@ -73,15 +73,18 @@ Codurile `rc` afișate: `-2` = nu ajunge la server / port 8883, `-4` timeout, `4
 ### Windows: aplicația DeskBuddy
 Descarci `DeskBuddy-Windows.zip` din [Releases](../../releases/latest) și pornești `DeskBuddy.exe` (nu cere .NET instalat).
 Se deschide fereastra DeskBuddy, plus o iconiță în tray (punct verde = placa găsită în rețea, galben = negăsită, dar trimite oricum broadcast).
-- **Dispozitiv**: pagina de setări a plăcii, direct în fereastră
+- **Acasă**: cum e legată placa (USB, WiFi direct sau WiFi prin router) și tot ce arată ea: PC, joc + FPS, Claude, imprimanta, vremea, sistemul plăcii
+- **Placă**: toate setările plăcii, native (ecrane, afișaj și LED, vreme, WiFi, imprimantă cu login Bambu, Claude Code, parolă); merg prin USB sau WiFi
 - **PC**: ce trimite acum (CPU / GPU / RAM), dacă placa e găsită, IP-ul plăcii (doar dacă routerul blochează broadcast-ul), starea temperaturii CPU
 - **Claude Code**: integrarea cu Claude Code, usage-ul 5h / 7 zile, test pentru ecranul CLAUDE
 - **Aplicație**: pornește cu Windows (ca admin, fără prompt UAC), pornire direct în tray, **update-uri** (aplicația se actualizează singură; firmware-ul plăcii se urcă prin WiFi cu un click, sau prin USB)
 
+**Placa în altă rețea decât PC-ul** (de ex. în spatele unui al doilea router): placa trimite la 3 s un semnal spre PC (UDP 4212), iar aplicația îi răspunde pe același drum. IP-ul PC-ului îl află singură (prin USB sau din datele primite). Dacă Windows întreabă de DeskBuddy în Firewall, permite rețelele private.
+
 **USB sau WiFi** (pagina PC → Conexiune): *Auto* trimite pe cablu când placa e legată la PC, altfel pe WiFi; mai sunt *Doar USB* și *Doar WiFi*.
 Pe USB merg ecranele PC, CLAUDE și CEAS (ora vine de la PC) și fără WiFi; VREME și IMPRIMANTA au nevoie de WiFi.
 Cu placa pe cablu, WiFi-ul ei se setează direct din aplicație (pagina PC → WiFi-ul plăcii): cauți rețelele, scrii parola, gata.
-Fără WiFi, pagina **Dispozitiv** deschide setările plăcii prin cablu, iar PC-ul ia în locul plăcii vremea și starea imprimantei. Setările rămân salvate pe placă, deci merg la fel și când îi dai WiFi.
+Fără WiFi, setările plăcii merg prin cablu, iar PC-ul ia în locul plăcii vremea și starea imprimantei. Setările rămân salvate pe placă, deci merg la fel și când îi dai WiFi.
 
 Temperatura CPU (Ryzen / Intel) cere **drepturi de admin** și driverul **PawnIO** (`winget install namazso.PawnIO` sau https://pawnio.eu).
 Fără ele merg load-ul CPU, RAM-ul și GPU-ul NVIDIA, iar pe ecran temperatura CPU apare `--`. Pagina PC arată ce lipsește.

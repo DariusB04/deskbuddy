@@ -26,7 +26,7 @@ sealed class UsbLink : IDisposable
 
     /// placa găsită pe USB: portul + ce a răspuns la "hi"
     /// Ssid = rețeaua salvată pe placă; WifiStatus = WiFi.status() (1 rețeaua nu se vede, 4 conectare eșuată, 6 deconectat)
-    public sealed record Board(string Port, string Version, string Variant, bool Wifi, string? Ip, string Ssid, int WifiStatus, bool Setup);
+    public sealed record Board(string Port, string Version, string Variant, bool Wifi, string? Ip, string Ssid, int WifiStatus, bool Setup, bool NeedsPassword = false);
 
     readonly List<(string Prefix, TaskCompletionSource<string> Reply)> pending = [];
     int nextId;
@@ -67,6 +67,10 @@ sealed class UsbLink : IDisposable
 
     public UsbLink()
     {
+        Microsoft.Win32.SystemEvents.PowerModeChanged += (_, e) =>
+        {
+            if (e.Mode == Microsoft.Win32.PowerModes.Resume) { Close(); lock (gate) retryAt.Clear(); }
+        };
         thread = new Thread(Loop) { IsBackground = true, Name = "usb-link" };
         thread.Start();
     }
@@ -198,7 +202,7 @@ sealed class UsbLink : IDisposable
                     catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
                     {
                         sp.Dispose();                   // ocupat (Arduino, alt program): mai încercăm peste 30 s
-                        retryAt[c.Name] = now + 30_000;
+                        retryAt[c.Name] = now + 5_000;
                         continue;
                     }
                     port = sp;
@@ -248,12 +252,14 @@ sealed class UsbLink : IDisposable
                 try { port.Write("\n{\"t\":\"hi\"}\n"); }
                 catch (Exception e) when (e is IOException or InvalidOperationException or TimeoutException or UnauthorizedAccessException) { CloseLocked(); return; }
             }
-            if (board == null && now - probeSince > 25_000)
+            if (board == null && now - probeSince > 30_000)
             {
-                retryAt[probing ?? port.PortName] = now + 60_000;   // nu e DeskBuddy (sau are firmware vechi, fără USB)
+                // nu răspunde (nu e DeskBuddy, firmware vechi fără USB): portul rămâne liber 10 s, apoi mai încercăm;
+                // înainte stătea 60 s și părea că placa trebuie scoasă din USB
+                retryAt[probing ?? port.PortName] = now + 10_000;
                 CloseLocked();
             }
-            else if (board != null && now - lastReply > 35_000) CloseLocked();
+            else if (board != null && now - lastReply > 25_000) CloseLocked();   // tăcută: redeschidem portul
         }
     }
 
@@ -267,7 +273,7 @@ sealed class UsbLink : IDisposable
             bool Bool(string k) => r.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.True;
             int st = r.TryGetProperty("st", out var s) && s.ValueKind == JsonValueKind.Number ? s.GetInt32() : -1;
             var b = new Board(port!.PortName, Str("deskbuddy"), Str("variant"), Bool("wifi"), Str("ip") is { Length: > 0 } ip ? ip : null,
-                              Str("ssid"), st, Bool("setup"));
+                              Str("ssid"), st, Bool("setup"), Bool("pw"));
             lastReply = now;
             probing = null;
             bool changed = board != b;

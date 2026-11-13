@@ -54,6 +54,18 @@ static class Theme
         Font = Body, ForeColor = Fg, BackColor = Input, BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 4, 8, 6),
     };
 
+    public static NumericUpDown Num(int min, int max, int width = 80) => new()
+    {
+        Minimum = min, Maximum = max, Width = width, Font = Body, ForeColor = Fg, BackColor = Input,
+        BorderStyle = BorderStyle.FixedSingle, Margin = new Padding(0, 6, 8, 6), TextAlign = HorizontalAlignment.Right,
+    };
+
+    /// eticheta mică de deasupra unui câmp
+    public static Label FieldLabel(string text) => new()
+    {
+        Text = text, AutoSize = true, Font = Small, ForeColor = Muted, Margin = new Padding(0, 8, 0, 0),
+    };
+
     public static ComboBox Combo(int width) => new()
     {
         Font = Body, ForeColor = Fg, BackColor = Input, FlatStyle = FlatStyle.Flat, DropDownStyle = ComboBoxStyle.DropDownList,

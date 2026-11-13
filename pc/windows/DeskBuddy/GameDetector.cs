@@ -30,6 +30,8 @@ sealed class GameDetector
     };
 
     int? gamePid;
+    /// procesul jocului curent (pentru FPS)
+    public int? CurrentPid => gamePid;
     string? gameName;
     long checkedAt = -10_000;
 

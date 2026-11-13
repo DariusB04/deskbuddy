@@ -12,7 +12,7 @@
     <AssemblyName>DeskBuddy</AssemblyName>
     <RootNamespace>DeskBuddy</RootNamespace>
     <!-- la release, GitHub Actions dă -p:Version=<tag> și -p:GitHubRepo=<owner/repo> -->
-    <Version>1.5.0</Version>
+    <Version>2.0.0</Version>
     <GitHubRepo Condition="'$(GitHubRepo)' == ''"></GitHubRepo>
     <Product>DeskBuddy</Product>
     <!-- aceeași iconiță ca în tray; regenerată cu: DeskBuddy.exe make-icon DeskBuddy.ico -->
@@ -31,10 +31,10 @@
   <ItemGroup>
     <!-- citește senzorii direct (fără LibreHardwareMonitor pornit separat); temperatura CPU cere admin + driverul PawnIO -->
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
-    <!-- pagina de setări a plăcii, afișată în fereastră (WebView2 Runtime vine cu Windows 11) -->
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4258.31" />
     <!-- legătura prin USB: datele și flash-ul firmware-ului -->
     <PackageReference Include="System.IO.Ports" Version="10.0.3" />
+    <!-- FPS-ul jocurilor: evenimentele ETW „Present” (DXGI / D3D9), ca PresentMon -->
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="3.1.16" />
   </ItemGroup>
 
   <ItemGroup>
@@ -42,11 +42,5 @@
     <AssemblyMetadata Include="GitHubRepo" Value="$(GitHubRepo)" />
   </ItemGroup>
 
-  <!-- pachetul WebView2 aduce și varianta WPF: n-o folosim (doar WinForms), deci n-o includem -->
-  <Target Name="DropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
-    <ItemGroup>
-      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
-    </ItemGroup>
-  </Target>
 
 </Project>

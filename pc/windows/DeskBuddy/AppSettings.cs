@@ -33,6 +33,21 @@ sealed class AppSettings
             : Convert.ToBase64String(ProtectedData.Protect(System.Text.Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser));
     }
 
+    public string BoardPasswordProtected { get; set; } = "";   // parola paginii plăcii (pentru setări pe WiFi), DPAPI
+
+    [JsonIgnore]
+    public string? BoardPassword
+    {
+        get
+        {
+            if (BoardPasswordProtected.Length == 0) return null;
+            try { return System.Text.Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(BoardPasswordProtected), null, DataProtectionScope.CurrentUser)); }
+            catch (Exception e) when (e is CryptographicException or FormatException) { return null; }
+        }
+        set => BoardPasswordProtected = string.IsNullOrEmpty(value) ? ""
+            : Convert.ToBase64String(ProtectedData.Protect(System.Text.Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser));
+    }
+
     [JsonIgnore]
     public bool HasPrivateFirmware => FirmwareRepo.Contains('/') && FirmwareTokenProtected.Length > 0;
 
