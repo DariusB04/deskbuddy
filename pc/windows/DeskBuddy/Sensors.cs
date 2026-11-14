@@ -135,7 +135,9 @@ sealed class Sensors : IDisposable
                 var ctl = hw.Sensors.FirstOrDefault(c => c.SensorType == SensorType.Control && c.Index == s.Index && c.Value is float cv && float.IsFinite(cv));
                 float floor = b == "POMPA" ? 3000 : 1800;
                 float pct = ctl?.Value ?? 100f * rpm / Math.Max(maxRpm[id], floor);
-                string label = count > 1 ? (b == "POMPA" ? "POMP" : b) + k : b;
+                // numărul din numele senzorului ("System Fan #3" -> SYS3), ca pe placa de bază; altfel al câtelea e
+                var num = System.Text.RegularExpressions.Regex.Match(s.Name, @"(\d+)\s*$");
+                string label = count > 1 ? (b == "POMPA" ? "POMP" : b) + (num.Success ? num.Groups[1].Value : k.ToString(CultureInfo.InvariantCulture)) : b;
                 list.Add(new Fan(label, rpm, Math.Clamp(pct, 0, 100), b == "POMPA"));
             }
         }
