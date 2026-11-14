@@ -37,6 +37,14 @@ static class Program
                 return TrayApp.WriteIco(args.Length > 1 ? args[1] : "DeskBuddy.ico");
             case "usb-flash":                         // DeskBuddy.exe usb-flash COM3 <fișier.bin|-> probe|keep|full (pentru teste / depanare)
                 return EspFlasher.Cli(args);
+            case "fans":                              // DeskBuddy.exe fans: senzorii de ventilatoare (depanare; ca admin vede și placa de bază)
+            {
+                using var s = new Sensors();
+                s.Read();
+                Thread.Sleep(1500);                   // a doua citire: turațiile au nevoie de un interval
+                Console.Write(s.DumpFans());
+                return 0;
+            }
             case "--autostart":
                 return Autostart.Apply(args.Length > 1 && args[1] == "on") ? 0 : 1;
             case "--via-task":                        // repornire ca admin prin task: așteaptă să se închidă instanța veche

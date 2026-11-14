@@ -1,14 +1,16 @@
 # DeskBuddy – ESP32 + OLED + LED „sub birou”
 
 Un gadget de birou: ESP32 + ecran OLED 128×64 într-o carcasă printată 3D, ridicată pe 4 picioruțe, cu un LED RGB care luminează biroul de dedesubt.
-Butonul de sus schimbă ecranele: **CEAS** → **VREME** → **PC** → **IMPRIMANTA** → **CLAUDE** → **SISTEM** (din pagina de setări alegi care apar).
+Butonul de sus schimbă ecranele: **CEAS** → **VREME** → **PC** → **VENTILATOARE** → **IMPRIMANTA** → **CLAUDE** → **SISTEM** → **MUZICA** (din pagina de setări alegi care apar).
 
 - **CEAS**: ora cu cifre „dot-matrix”, data, secundele
 - **VREME**: acum + 3 zile (Open-Meteo, fără cont), după IP sau orașul ales
 - **PC**: temperaturi și load CPU / GPU / RAM de la PC (aplicația de Windows sau scriptul de Linux)
+- **VENTILATOARE**: turația ventilatoarelor și a pompei AIO (aplicația de Windows, pornită ca admin); se așază după câte sunt
 - **IMPRIMANTA**: Bambu Lab (cloud sau LAN): progres, timp rămas, temperaturi; sare singur pe ecran când se termină un print
 - **CLAUDE**: ce face Claude Code acum (lucrează / te așteaptă / gata), usage-ul pe 5 ore și 7 zile, plus „Bit”, un roboțel animat
 - **SISTEM**: ESP32-ul însuși: load pe nucleu, RAM, WiFi
+- **MUZICA**: ce se redă pe PC (Spotify, YouTube, orice player din panoul de volum Windows)
 
 Apăsare lungă: LED **AUTO** (slab noaptea) / **MAX** / **OFF**.
 

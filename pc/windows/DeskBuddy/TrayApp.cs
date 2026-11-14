@@ -64,6 +64,7 @@ sealed class TrayApp : ApplicationContext
     MainForm? form;
     Sensors? sensors;
     int busy;
+    bool fansDumped;                            // fans.txt: ce senzori de ventilatoare găsește aplicația (depanare)
     long usageAt = -60_000, timeAt = -60_000;   // „demult”: prima bifă le face imediat
     Health health = Health.Starting;
     Icon? currentIcon;
@@ -532,6 +533,11 @@ sealed class TrayApp : ApplicationContext
         {
             sensors ??= new Sensors();                 // prima deschidere poate dura câteva secunde
             var s = sensors.Read();
+            if (!fansDumped)
+            {
+                fansDumped = true;
+                try { File.WriteAllText(Path.Combine(AppSettings.Dir, "fans.txt"), sensors.DumpFans()); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
             Game = games.Current();
             var f = games.CurrentPid is int gpid ? fps.For(gpid) : null;
             Fps = f?.Fps;
