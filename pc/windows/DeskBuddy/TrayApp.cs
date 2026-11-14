@@ -45,6 +45,49 @@ sealed class TrayApp : ApplicationContext
     readonly NotifyIcon tray;
     readonly ContextMenuStrip menu = new();
     readonly ToolStripMenuItem miStats = new() { Enabled = false };
+    readonly ToolStripMenuItem miOpen = new(), miBrowser = new(), miExit = new();
+    bool langSynced;                                  // limba plăcii a fost pusă ca a aplicației (o dată pe conexiune)
+
+    void MenuTexts()
+    {
+        miOpen.Text = L.T("Deschide DeskBuddy", "Open DeskBuddy");
+        miBrowser.Text = L.T("Pagina plăcii în browser", "Board page in the browser");
+        miExit.Text = L.T("Ieșire", "Exit");
+    }
+
+    /// limba aplicației și a plăcii: salvează, refă fereastra (pe pagina Aplicație) și trimite setarea plăcii
+    public void SetLanguage(string code)
+    {
+        Settings.Language = code;
+        Settings.Save();
+        L.En = code == "en";
+        MenuTexts();
+        if (form != null)
+        {
+            bool visible = form.Visible;
+            var old = form;
+            form = null;
+            old.Replacing = true;
+            old.Close();
+            if (visible) { ShowWindow(); form?.ShowAppPage(); }
+        }
+        langSynced = false;
+        _ = SyncBoardLanguageAsync();
+    }
+
+    /// placa afișează textele în limba aplicației: dacă diferă, i-o trimitem (o dată pe conexiune)
+    async Task SyncBoardLanguageAsync()
+    {
+        if (langSynced || !DeviceFound) return;
+        langSynced = true;
+        try
+        {
+            var c = await ApiAsync("/api/config");
+            string want = Settings.LanguageCode;
+            if (c?["lang"] is { } l && (string?)l != want) await ApiAsync("/api/set", new Dictionary<string, string> { ["lang"] = want });
+        }
+        catch (Exception) { langSynced = false; }             // placa fără răspuns / cu parolă: reîncercăm la următoarea conexiune
+    }
     readonly WindowsFormsSynchronizationContext ui;
     readonly UsbLink usb = new();
     readonly WifiLink wifi = new();
@@ -108,9 +151,9 @@ sealed class TrayApp : ApplicationContext
         this.showSignal = showSignal;
         UdpSender.HostOverride = Settings.HostIp;
 
-        var miOpen = new ToolStripMenuItem("Deschide DeskBuddy") { Font = new Font(SystemFonts.MenuFont ?? Theme.Body, FontStyle.Bold) };
-        var miBrowser = new ToolStripMenuItem("Pagina plăcii în browser");
-        var miExit = new ToolStripMenuItem("Ieșire");
+        L.En = Settings.LanguageCode == "en";
+        miOpen.Font = new Font(SystemFonts.MenuFont ?? Theme.Body, FontStyle.Bold);
+        MenuTexts();
         menu.Items.AddRange([miOpen, miBrowser, new ToolStripSeparator(), miStats, new ToolStripSeparator(), miExit]);
         ui = new WindowsFormsSynchronizationContext();
         usb.Enabled = Settings.Link != LinkMode.Wifi;
@@ -119,16 +162,16 @@ sealed class TrayApp : ApplicationContext
             timeAt = -60_000;                         // ora pleacă imediat pe USB
             if (usb.Connected != null) usb.Send(System.Text.Encoding.UTF8.GetBytes(
                 new System.Text.Json.Nodes.JsonObject { ["t"] = "pcip", ["a"] = string.Join(',', LocalIps().Take(3)) }.ToJsonString()));
-            ui.Post(_ => { if (!Quitting) Updated?.Invoke(); }, null);
+            ui.Post(_ => { if (!Quitting) { Updated?.Invoke(); if (usb.Connected == null) langSynced = false; else _ = SyncBoardLanguageAsync(); } }, null);
         };
-        wifi.Changed += () => ui.Post(_ => { if (!Quitting) Updated?.Invoke(); }, null);
+        wifi.Changed += () => ui.Post(_ => { if (!Quitting) { Updated?.Invoke(); if (DeviceFound) _ = SyncBoardLanguageAsync(); } }, null);
         relay = Relay.Listen(Route);
         needs = new BoardNeeds(usb.Send);             // vremea / imprimanta / login-ul Bambu pentru placa fără WiFi
         usb.Need += needs.Handle;
 
         tray = new NotifyIcon { ContextMenuStrip = menu, Text = "DeskBuddy", Visible = true };
         SetHealth(Health.Starting, force: true);
-        menu.Opening += (_, _) => miStats.Text = Latest?.Summary() ?? "se citește...";
+        menu.Opening += (_, _) => miStats.Text = Latest?.Summary() ?? L.T("se citește...", "reading...");
         tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowWindow(); };
         miOpen.Click += (_, _) => ShowWindow();
         miBrowser.Click += (_, _) => Shell(DeviceUrl ?? "http://deskbuddy.local/");
@@ -140,7 +183,7 @@ sealed class TrayApp : ApplicationContext
         {
             if (!balloonOpensUpdates) return;
             ShowWindow();
-            form?.ShowPage("Aplicație");
+            form?.ShowAppPage();
         };
         tray.BalloonTipClosed += (_, _) => balloonOpensUpdates = false;
         updateTimer.Tick += async (_, _) => await PeriodicChecksAsync();
@@ -167,7 +210,7 @@ sealed class TrayApp : ApplicationContext
     {
         if (trayHintShown) return;
         trayHintShown = true;
-        tray.ShowBalloonTip(3000, "DeskBuddy", "Rulează în continuare în tray. Click pe iconiță deschide fereastra.", ToolTipIcon.Info);
+        tray.ShowBalloonTip(3000, "DeskBuddy", L.T("Rulează în continuare în tray. Click pe iconiță deschide fereastra.", "Still running in the tray. Click the icon to open the window."), ToolTipIcon.Info);
     }
 
     void WaitForShowSignal()
@@ -231,13 +274,13 @@ sealed class TrayApp : ApplicationContext
             if (Settings.BoardPassword is { Length: > 0 } pw) req["pw"] = pw;
             res = await wifi.RequestAsync(req.ToJsonString(), prefix, timeoutMs);
         }
-        else throw new IOException("Placa nu e conectată (nici pe USB, nici pe WiFi).");
-        if (res == null) throw new TimeoutException("Placa n-a răspuns.");
+        else throw new IOException(L.T("Placa nu e conectată (nici pe USB, nici pe WiFi).", "The board isn't connected (neither USB nor WiFi)."));
+        if (res == null) throw new TimeoutException(L.T("Placa n-a răspuns.", "The board didn't respond."));
         using var d = JsonDocument.Parse(res);
         int code = d.RootElement.GetProperty("c").GetInt32();
         string body = d.RootElement.GetProperty("b").GetString() ?? "";
-        if (code == 401) throw new UnauthorizedAccessException("Placa cere parola paginii.");
-        if (code != 200) throw new IOException($"Placa a răspuns cu {code}.");
+        if (code == 401) throw new UnauthorizedAccessException(L.T("Placa cere parola paginii.", "The board asks for the page password."));
+        if (code != 200) throw new IOException(L.T($"Placa a răspuns cu {code}.", $"The board replied with {code}."));
         return JsonNode.Parse(body);
     }
 
@@ -323,7 +366,7 @@ sealed class TrayApp : ApplicationContext
         }
         catch (Exception e) when (e is IOException or TimeoutException or UnauthorizedAccessException or InvalidOperationException)
         {
-            return "Flash eșuat: " + e.Message;
+            return L.T("Flash eșuat: ", "Flash failed: ") + e.Message;
         }
         finally { usb.Resume(); }
     }
@@ -338,37 +381,37 @@ sealed class TrayApp : ApplicationContext
             {
                 image = await File.ReadAllBytesAsync(localFile);
                 merged = EspFlasher.LooksLikeMerged(image);
-                if (!merged && !DeviceFirmware.LooksLikeApp(image)) return "Fișierul nu e un firmware ESP32 (nici DeskBuddy-flash.bin, nici DeskBuddy.ino.bin).";
+                if (!merged && !DeviceFirmware.LooksLikeApp(image)) return L.T("Fișierul nu e un firmware ESP32 (nici DeskBuddy-flash.bin, nici DeskBuddy.ino.bin).", "The file isn't ESP32 firmware (neither DeskBuddy-flash.bin nor DeskBuddy.ino.bin).");
             }
             else
             {
                 var rel = FirmwareRelease;
                 if (rel?.Flash is not Asset asset)
-                    return PrivateFirmwareMissing ? "Firmware-ul plăcii vine din repo-ul privat: completează-l mai jos și apasă „Verifică acum”."
-                                                  : "Nu găsesc DeskBuddy-flash.bin în ultimul release. Apasă „Verifică acum”.";
+                    return PrivateFirmwareMissing ? L.T("Firmware-ul plăcii vine din repo-ul privat: completează-l mai jos și apasă „Verifică acum”.", "The board's firmware comes from the private repo: fill it in below and press “Check now”.")
+                                                  : L.T("Nu găsesc DeskBuddy-flash.bin în ultimul release. Apasă „Verifică acum”.", "Can't find DeskBuddy-flash.bin in the latest release. Press “Check now”.");
                 bool priv = UsePrivateFirmware;
-                status.Report("Descarc firmware-ul din GitHub...");
+                status.Report(L.T("Descarc firmware-ul din GitHub...", "Downloading the firmware from GitHub..."));
                 image = await Updater.DownloadAsync(asset, priv ? Settings.FirmwareToken : null);
                 merged = EspFlasher.LooksLikeMerged(image);
-                if (!merged) return "DeskBuddy-flash.bin din release nu arată ca o imagine completă.";
+                if (!merged) return L.T("DeskBuddy-flash.bin din release nu arată ca o imagine completă.", "DeskBuddy-flash.bin from the release doesn't look like a full image.");
             }
         }
-        catch (Exception e) { return "Nu pot citi firmware-ul: " + e.Message; }
+        catch (Exception e) { return L.T("Nu pot citi firmware-ul: ", "Can't read the firmware: ") + e.Message; }
 
         var regions = merged
             ? kind == UsbFlashKind.Full ? EspFlasher.PlanFull(image) : EspFlasher.PlanKeepSettings(image)
             : EspFlasher.PlanApp(image);
         if (await WriteFlashAsync(portName, regions, status) is string err) return err;
 
-        status.Report("Placa repornește...");
+        status.Report(L.T("Placa repornește...", "The board is restarting..."));
         for (int i = 0; i < 20; i++)                  // așteaptă să răspundă pe USB (setup-ul poate aștepta WiFi-ul ~20 s)
         {
             await Task.Delay(1500);
-            if (usb.Connected is { } b) return $"Gata: placa rulează firmware-ul {b.Version} ({b.Variant}).";
+            if (usb.Connected is { } b) return L.T($"Gata: placa rulează firmware-ul {b.Version} ({b.Variant}).", $"Done: the board runs firmware {b.Version} ({b.Variant}).");
         }
         return kind == UsbFlashKind.Full
-            ? "Gata. Placa pornește în modul SETUP: conectează-te la rețeaua DeskBuddy-Setup ca să-i dai WiFi-ul (sau las-o doar pe USB)."
-            : "Gata, firmware scris. Placa n-a răspuns încă pe USB (dacă „Conexiune” e pe „Doar WiFi”, e normal).";
+            ? L.T("Gata. Placa pornește în modul SETUP: conectează-te la rețeaua DeskBuddy-Setup ca să-i dai WiFi-ul (sau las-o doar pe USB).", "Done. The board starts in SETUP mode: connect to the DeskBuddy-Setup network to give it WiFi (or keep it on USB only).")
+            : L.T("Gata, firmware scris. Placa n-a răspuns încă pe USB (dacă „Conexiune” e pe „Doar WiFi”, e normal).", "Done, firmware written. The board hasn't answered on USB yet (normal if “Connection” is set to “WiFi only”).");
     }
 
     // ------------------------------------------------------------ update-uri
@@ -394,14 +437,14 @@ sealed class TrayApp : ApplicationContext
             try
             {
                 Release = await Updater.GetLatestAsync();
-                if (Release == null) UpdateError = "niciun release încă";
+                if (Release == null) UpdateError = L.T("niciun release încă", "no release yet");
             }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
             {
-                UpdateError = "nu pot ajunge la GitHub";
+                UpdateError = L.T("nu pot ajunge la GitHub", "can't reach GitHub");
             }
         }
-        else UpdateError = "build local: fără update-uri pentru aplicație";
+        else UpdateError = L.T("build local: fără update-uri pentru aplicație", "local build: no app updates");
 
         PrivateError = null;
         if (Settings.HasPrivateFirmware)
@@ -409,12 +452,12 @@ sealed class TrayApp : ApplicationContext
             try
             {
                 PrivateRelease = await Updater.GetLatestAsync(Settings.FirmwareRepo.Trim(), Settings.FirmwareToken);
-                if (PrivateRelease == null) PrivateError = "niciun release în repo-ul privat (sau repo greșit)";
+                if (PrivateRelease == null) PrivateError = L.T("niciun release în repo-ul privat (sau repo greșit)", "no release in the private repo (or wrong repo)");
             }
             catch (UnauthorizedAccessException e) { PrivateError = e.Message; }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException or System.Text.Json.JsonException)
             {
-                PrivateError = "nu pot ajunge la repo-ul privat";
+                PrivateError = L.T("nu pot ajunge la repo-ul privat", "can't reach the private repo");
             }
         }
         else PrivateRelease = null;
@@ -427,9 +470,9 @@ sealed class TrayApp : ApplicationContext
         {
             notifiedKey = key;
             balloonOpensUpdates = true;
-            string what = app && fw ? "aplicația și firmware-ul plăcii" : app ? "aplicația" : "firmware-ul plăcii";
+            string what = app && fw ? L.T("aplicația și firmware-ul plăcii", "the app and the board firmware") : app ? L.T("aplicația", "the app") : L.T("firmware-ul plăcii", "the board firmware");
             var v = app ? Release!.Version : FirmwareRelease!.Version;
-            tray.ShowBalloonTip(8000, $"DeskBuddy {v.ToString(3)}", $"E disponibilă o versiune nouă pentru {what}. Click aici ca s-o instalezi.", ToolTipIcon.Info);
+            tray.ShowBalloonTip(8000, $"DeskBuddy {v.ToString(3)}", L.T($"E disponibilă o versiune nouă pentru {what}. Click aici ca s-o instalezi.", $"A new version is available for {what}. Click here to install it."), ToolTipIcon.Info);
         }
     }
 
@@ -444,16 +487,16 @@ sealed class TrayApp : ApplicationContext
     /// descarcă noul DeskBuddy.exe, îl pune în locul celui vechi și repornește (cu aceleași drepturi)
     public async Task<string?> UpdateAppAsync()
     {
-        if (Release?.App is not Asset asset) return "nu e niciun update";
+        if (Release?.App is not Asset asset) return L.T("nu e niciun update", "no update available");
         try
         {
             byte[] zip = await Updater.DownloadAsync(asset);
             Updater.InstallApp(zip);
         }
-        catch (Exception e) { return "Update eșuat: " + e.Message; }
+        catch (Exception e) { return L.T("Update eșuat: ", "Update failed: ") + e.Message; }
         var psi = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, Arguments = "--restarted --show" };
         try { Process.Start(psi); }
-        catch (Win32Exception e) { return "Instalat, dar nu pot reporni: " + e.Message + ". Pornește DeskBuddy din nou."; }
+        catch (Win32Exception e) { return L.T("Instalat, dar nu pot reporni: ", "Installed, but can't restart: ") + e.Message + L.T(". Pornește DeskBuddy din nou.", ". Start DeskBuddy again."); }
         Quit();
         return null;
     }
@@ -466,32 +509,32 @@ sealed class TrayApp : ApplicationContext
     public async Task<(DeviceFirmware.Result Result, string Message)> UpdateFirmwareAsync(string? password, IProgress<string> status)
     {
         var rel = FirmwareRelease;
-        if (rel?.Firmware is not Asset asset || DeviceUrl is not string url) return (DeviceFirmware.Result.Failed, "Placa sau release-ul lipsesc.");
+        if (rel?.Firmware is not Asset asset || DeviceUrl is not string url) return (DeviceFirmware.Result.Failed, L.T("Placa sau release-ul lipsesc.", "The board or the release is missing."));
         bool priv = UsePrivateFirmware;
         try
         {
             if (firmwareCache == null || firmwareCacheVersion != rel.Version || firmwareCachePrivate != priv)
             {
-                status.Report("Descarc firmware-ul din GitHub...");
+                status.Report(L.T("Descarc firmware-ul din GitHub...", "Downloading the firmware from GitHub..."));
                 firmwareCache = await Updater.DownloadAsync(asset, priv ? Settings.FirmwareToken : null);
                 firmwareCacheVersion = rel.Version;
                 firmwareCachePrivate = priv;
             }
         }
-        catch (Exception e) { return (DeviceFirmware.Result.Failed, "Nu pot descărca firmware-ul: " + e.Message); }
+        catch (Exception e) { return (DeviceFirmware.Result.Failed, L.T("Nu pot descărca firmware-ul: ", "Can't download the firmware: ") + e.Message); }
 
-        status.Report($"Urc firmware-ul pe placă ({firmwareCache.Length / 1024} KB, durează ~1 min pe WiFi slab)...");
+        status.Report(L.T($"Urc firmware-ul pe placă ({firmwareCache.Length / 1024} KB, durează ~1 min pe WiFi slab)...", $"Uploading the firmware ({firmwareCache.Length / 1024} KB, ~1 min on weak WiFi)..."));
         var r = await DeviceFirmware.UploadAsync(url, firmwareCache, password);
         if (r.Result != DeviceFirmware.Result.Ok) return r;
 
-        status.Report("Placa repornește...");
+        status.Report(L.T("Placa repornește...", "The board is restarting..."));
         string want = rel.Version.ToString(3);
         for (int i = 0; i < 30; i++)                  // până la ~60 s
         {
             await Task.Delay(2000);
-            if (Board?.Version == want) return (DeviceFirmware.Result.Ok, $"Gata: placa rulează firmware-ul {want}.");
+            if (Board?.Version == want) return (DeviceFirmware.Result.Ok, L.T($"Gata: placa rulează firmware-ul {want}.", $"Done: the board runs firmware {want}."));
         }
-        return (DeviceFirmware.Result.Ok, "Firmware urcat, dar placa n-a răspuns încă după repornire. Verifică peste un minut.");
+        return (DeviceFirmware.Result.Ok, L.T("Firmware urcat, dar placa n-a răspuns încă după repornire. Verifică peste un minut.", "Firmware uploaded, but the board hasn't answered after the restart yet. Check again in a minute."));
     }
 
     public void RestartAsAdmin()

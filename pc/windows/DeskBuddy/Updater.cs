@@ -61,7 +61,7 @@ static class Updater
         if (token != null) req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         using var resp = await Http.SendAsync(req, ct);
         if (resp.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
-            throw new UnauthorizedAccessException("token-ul GitHub nu e valid sau nu are acces la " + repo);
+            throw new UnauthorizedAccessException(L.T("token-ul GitHub nu e valid sau nu are acces la ", "the GitHub token is invalid or has no access to ") + repo);
         if (!resp.IsSuccessStatusCode) return null;          // 404 = încă niciun release
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStreamAsync(ct));
         var root = doc.RootElement;
@@ -97,9 +97,9 @@ static class Updater
             resp.EnsureSuccessStatusCode();
             data = await resp.Content.ReadAsByteArrayAsync(ct);
         }
-        if (data.LongLength != asset.Size) throw new InvalidDataException($"descărcare incompletă ({data.Length} din {asset.Size} B)");
+        if (data.LongLength != asset.Size) throw new InvalidDataException(L.T($"descărcare incompletă ({data.Length} din {asset.Size} B)", $"incomplete download ({data.Length} of {asset.Size} B)"));
         if (asset.Sha256 != null && !Convert.ToHexString(SHA256.HashData(data)).Equals(asset.Sha256, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("SHA-256 diferit de cel din release");
+            throw new InvalidDataException(L.T("SHA-256 diferit de cel din release", "SHA-256 differs from the release"));
         return data;
     }
 
@@ -108,12 +108,12 @@ static class Updater
     /// hook-urile Claude și task-ul de pornire merg mai departe.
     public static void InstallApp(byte[] zip)
     {
-        string exe = Environment.ProcessPath ?? throw new InvalidOperationException("nu știu unde e DeskBuddy.exe");
+        string exe = Environment.ProcessPath ?? throw new InvalidOperationException(L.T("nu știu unde e DeskBuddy.exe", "don't know where DeskBuddy.exe is"));
         string fresh = exe + ".new", old = exe + ".old";
         using (var archive = new ZipArchive(new MemoryStream(zip), ZipArchiveMode.Read))
         {
             var entry = archive.Entries.FirstOrDefault(e => e.Name.Equals("DeskBuddy.exe", StringComparison.OrdinalIgnoreCase))
-                        ?? throw new InvalidDataException("arhiva nu conține DeskBuddy.exe");
+                        ?? throw new InvalidDataException(L.T("arhiva nu conține DeskBuddy.exe", "the archive doesn't contain DeskBuddy.exe"));
             entry.ExtractToFile(fresh, overwrite: true);
         }
         if (File.Exists(old)) File.Delete(old);

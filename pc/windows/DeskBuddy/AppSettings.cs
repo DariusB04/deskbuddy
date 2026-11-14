@@ -19,6 +19,10 @@ sealed class AppSettings
     public string FirmwareRepo { get; set; } = "";       // opțional: repo privat cu firmware-ul plăcii (owner/nume)
     public string FirmwareTokenProtected { get; set; } = "";   // token-ul pentru el, criptat cu DPAPI (doar userul ăsta, pe PC-ul ăsta)
     public LinkMode Link { get; set; } = LinkMode.Auto;  // pe unde pleacă datele spre placă
+    public string Language { get; set; } = "";           // "ro" / "en"; gol = instalare nouă: după limba Windows-ului (L.DefaultCode)
+
+    [JsonIgnore]
+    public string LanguageCode => Language is "ro" or "en" ? Language : L.DefaultCode;
 
     [JsonIgnore]
     public string? FirmwareToken
@@ -60,7 +64,12 @@ sealed class AppSettings
 
     public static AppSettings Load()
     {
-        try { return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new AppSettings(); }
+        try
+        {
+            var s = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath)) ?? new AppSettings();
+            if (s.Language.Length == 0) s.Language = "ro";        // instalare de dinainte de engleză: rămâne în română
+            return s;
+        }
         catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return new AppSettings(); }
     }
 

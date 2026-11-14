@@ -39,7 +39,7 @@ static class DeviceFirmware
 
     public static async Task<(Result Result, string Message)> UploadAsync(string baseUrl, byte[] bin, string? password, CancellationToken ct = default)
     {
-        if (!LooksLikeApp(bin)) return (Result.Failed, "Fișierul nu e un program ESP32 valid.");
+        if (!LooksLikeApp(bin)) return (Result.Failed, L.T("Fișierul nu e un program ESP32 valid.", "The file isn't a valid ESP32 program."));
         using var form = new MultipartFormDataContent();
         var file = new ByteArrayContent(bin);
         file.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
@@ -52,16 +52,16 @@ static class DeviceFirmware
             using var resp = await Http.SendAsync(req, ct);
             // cu parolă greșită / lipsă, placa ignoră fișierul și răspunde 401 la final
             if (resp.StatusCode == HttpStatusCode.Unauthorized)
-                return (Result.NeedPassword, string.IsNullOrEmpty(password) ? "Pagina plăcii are parolă." : "Parolă greșită.");
+                return (Result.NeedPassword, string.IsNullOrEmpty(password) ? L.T("Pagina plăcii are parolă.", "The board page has a password.") : L.T("Parolă greșită.", "Wrong password."));
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
             var r = doc.RootElement;
-            if (r.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True) return (Result.Ok, "Firmware urcat. Placa repornește.");
+            if (r.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True) return (Result.Ok, L.T("Firmware urcat. Placa repornește.", "Firmware uploaded. The board is restarting."));
             string err = r.TryGetProperty("err", out var e) ? e.GetString() ?? "" : "";
             return (Result.Failed, err.Length > 0 ? err : $"HTTP {(int)resp.StatusCode}");
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException)
         {
-            return (Result.Failed, "Placa nu răspunde: " + e.Message);
+            return (Result.Failed, L.T("Placa nu răspunde: ", "The board isn't responding: ") + e.Message);
         }
     }
 }

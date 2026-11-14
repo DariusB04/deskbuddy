@@ -6,7 +6,7 @@ namespace DeskBuddy;
 /// Editorul unui ecran custom: numele și până la 6 elemente (lista de elemente vine de la placă, "citems").
 sealed class CustomScreenDialog : Form
 {
-    const string None = "— nimic —";
+    static string None => L.T("— nimic —", "— nothing —");
     readonly TextBox name = Theme.TextBox();
     readonly List<ComboBox> slots = [];
 
@@ -29,16 +29,16 @@ sealed class CustomScreenDialog : Form
         // ventilatoarele: cu eticheta lor de acum de pe PC, ca să știi care e care
         var shown = catalog.Select((c, i) =>
         {
-            const string pre = "Ventilator ";
-            if (c.StartsWith(pre, StringComparison.Ordinal) && int.TryParse(c[pre.Length..], out int k) && k >= 1 && k <= fanLabels.Count)
-                return $"{c} ({fanLabels[k - 1]})";
+            foreach (string pre in new[] { "Ventilator ", "Fan " })
+                if (c.StartsWith(pre, StringComparison.Ordinal) && int.TryParse(c[pre.Length..], out int k) && k >= 1 && k <= fanLabels.Count)
+                    return $"{c} ({fanLabels[k - 1]})";
             return c;
         }).ToList();
 
         var stack = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false, BackColor = Theme.Card };
-        stack.Controls.Add(Theme.FieldLabel("Numele ecranului (apare când îl schimbi, max 12 litere)"));
+        stack.Controls.Add(Theme.FieldLabel(L.T("Numele ecranului (apare când îl schimbi, max 12 litere)", "Screen name (shown when you switch to it, max 12 letters)")));
         stack.Controls.Add(name);
-        stack.Controls.Add(Theme.FieldLabel($"Ce apare pe el (până la {maxItems}; ecranul se așază după câte alegi)"));
+        stack.Controls.Add(Theme.FieldLabel(L.T($"Ce apare pe el (până la {maxItems}; ecranul se așază după câte alegi)", $"What it shows (up to {maxItems}; the layout adapts to how many you pick)")));
         for (int i = 0; i < maxItems; i++)
         {
             var cb = Theme.Combo(300);
@@ -49,11 +49,11 @@ sealed class CustomScreenDialog : Form
             slots.Add(cb);
             stack.Controls.Add(cb);
         }
-        var note = Theme.Label("1 element = mare, pe tot ecranul · 2–3 = rânduri · 4–6 = două coloane", Theme.Small, Theme.Muted);
+        var note = Theme.Label(L.T("1 element = mare, pe tot ecranul · 2–3 = rânduri · 4–6 = două coloane", "1 item = large, full screen · 2–3 = rows · 4–6 = two columns"), Theme.Small, Theme.Muted);
         stack.Controls.Add(note);
 
         var ok = Theme.Button("OK", primary: true);
-        var cancel = Theme.Button("Anulează");
+        var cancel = Theme.Button(L.T("Anulează", "Cancel"));
         ok.DialogResult = DialogResult.OK;
         cancel.DialogResult = DialogResult.Cancel;
         AcceptButton = ok;

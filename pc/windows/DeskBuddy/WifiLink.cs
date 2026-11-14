@@ -40,7 +40,7 @@ sealed class WifiLink : IDisposable
             thread = new Thread(Loop) { IsBackground = true, Name = "wifi-link" };
             thread.Start();
         }
-        catch (SocketException e) { Error = "portul UDP " + AppPort + " e ocupat: " + e.Message; }
+        catch (SocketException e) { Error = L.T("portul UDP ", "UDP port ") + AppPort + L.T(" e ocupat: ", " is in use: ") + e.Message; }
     }
 
     /// placa pe WiFi (null = n-am auzit-o de 12 s)

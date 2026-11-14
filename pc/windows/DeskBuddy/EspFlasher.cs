@@ -193,8 +193,8 @@ sealed class EspFlasher : IDisposable
             done += r.Data.Length;
         }
         if (nvsBefore != null && FlashMd5(NvsStart, NvsEnd - NvsStart) != nvsBefore)
-            throw new IOException("firmware-ul e scris, dar zona de setări s-a modificat: verifică setările plăcii");
-        status.Report("Gata, repornesc placa...");
+            throw new IOException(L.T("firmware-ul e scris, dar zona de setări s-a modificat: verifică setările plăcii", "the firmware is written, but the settings area changed: check the board's settings"));
+        status.Report(L.T("Gata, repornesc placa...", "Done, restarting the board..."));
         HardReset();
     }
 
@@ -203,7 +203,7 @@ sealed class EspFlasher : IDisposable
 
     void Connect()
     {
-        status.Report($"Mă conectez la placă pe {port.PortName}...");
+        status.Report(L.T($"Mă conectez la placă pe {port.PortName}...", $"Connecting to the board on {port.PortName}..."));
         port.Open();
         for (int attempt = 0; attempt < 8; attempt++)
         {
@@ -211,12 +211,12 @@ sealed class EspFlasher : IDisposable
             for (int i = 0; i < 5; i++)
                 if (TrySync()) goto synced;
         }
-        throw new IOException("placa nu intră în modul de programare. Ține apăsat butonul BOOT de pe ea și încearcă din nou.");
+        throw new IOException(L.T("placa nu intră în modul de programare. Ține apăsat butonul BOOT de pe ea și încearcă din nou.", "the board won't enter programming mode. Hold its BOOT button and try again."));
 
     synced:
         uint magic = Command(CmdReadReg, U32(ChipMagicReg)).Value;
-        if (magic != Esp32Magic) throw new IOException($"nu e un ESP32 clasic (cip 0x{magic:X8})");
-        status.Report("Placa a răspuns. Măresc viteza...");
+        if (magic != Esp32Magic) throw new IOException(L.T($"nu e un ESP32 clasic (cip 0x{magic:X8})", $"not a classic ESP32 (chip 0x{magic:X8})"));
+        status.Report(L.T("Placa a răspuns. Măresc viteza...", "The board answered. Raising the speed..."));
         Command(CmdChangeBaud, U32(FastBaud, 0));
         port.BaudRate = FastBaud;
         Thread.Sleep(60);
@@ -285,7 +285,7 @@ sealed class EspFlasher : IDisposable
         // are exact un multiplu de 32 KB (fereastra de decompresie), ROM-ul o mai scrie o dată imediat după ea, fără ștergere.
         // Zona bootloader + partiții are fix 32 KB, deci se scria peste NVS (0x9000) și placa își pierdea setările.
         int blocks = (data.Length + BlockSize - 1) / BlockSize;
-        status.Report($"Șterg zona 0x{r.Offset:X5} ({data.Length / 1024} KB)...");
+        status.Report(L.T($"Șterg zona 0x{r.Offset:X5} ({data.Length / 1024} KB)...", $"Erasing 0x{r.Offset:X5} ({data.Length / 1024} KB)..."));
         Command(CmdFlashBegin, U32((uint)data.Length, (uint)blocks, BlockSize, (uint)r.Offset), timeoutMs: PerMb(data.Length, 30_000));
 
         for (int seq = 0; seq < blocks; seq++)
@@ -300,14 +300,14 @@ sealed class EspFlasher : IDisposable
             for (int i = 16; i < pkt.Length; i++) chk ^= pkt[i];
             Command(CmdFlashData, pkt, chk, timeoutMs: 5_000);
             long doneBytes = before + (long)data.Length * (seq + 1) / blocks;
-            if (seq % 16 == 0 || seq == blocks - 1) status.Report($"Scriu firmware-ul... {doneBytes * 100 / Math.Max(1, total)}%");
+            if (seq % 16 == 0 || seq == blocks - 1) status.Report(L.T($"Scriu firmware-ul... {doneBytes * 100 / Math.Max(1, total)}%", $"Writing the firmware... {doneBytes * 100 / Math.Max(1, total)}%"));
         }
 
-        status.Report($"Verific zona 0x{r.Offset:X5}...");
+        status.Report(L.T($"Verific zona 0x{r.Offset:X5}...", $"Verifying 0x{r.Offset:X5}..."));
         var md5 = Command(CmdMd5, U32((uint)r.Offset, (uint)data.Length, 0, 0), timeoutMs: PerMb(data.Length, 8_000), payload: 32);
         string got = System.Text.Encoding.ASCII.GetString(md5.Data, 0, 32);
         string want = Convert.ToHexString(MD5.HashData(data));
-        if (!got.Equals(want, StringComparison.OrdinalIgnoreCase)) throw new IOException($"verificarea a eșuat la 0x{r.Offset:X5} (MD5 diferit)");
+        if (!got.Equals(want, StringComparison.OrdinalIgnoreCase)) throw new IOException(L.T($"verificarea a eșuat la 0x{r.Offset:X5} (MD5 diferit)", $"verification failed at 0x{r.Offset:X5} (MD5 mismatch)"));
     }
 
     static int PerMb(int bytes, int msPerMb) => Math.Max(5000, (int)((long)msPerMb * bytes / (1024 * 1024)) + 3000);
@@ -328,13 +328,13 @@ sealed class EspFlasher : IDisposable
         long deadline = Environment.TickCount64 + timeoutMs;
         while (true)
         {
-            var f = ReadFrame(deadline) ?? throw new TimeoutException($"placa nu răspunde (comanda 0x{op:X2})");
+            var f = ReadFrame(deadline) ?? throw new TimeoutException(L.T($"placa nu răspunde (comanda 0x{op:X2})", $"the board isn't responding (command 0x{op:X2})"));
             if (f.Length < 8 || f[0] != 0x01 || f[1] != op) continue;          // răspunsuri vechi (ex. la SYNC)
             int len = BinaryPrimitives.ReadUInt16LittleEndian(f.AsSpan(2));
             uint value = BinaryPrimitives.ReadUInt32LittleEndian(f.AsSpan(4));
             byte[] body = f[8..Math.Min(f.Length, 8 + len)];
-            if (body.Length < payload + 2) throw new IOException($"răspuns scurt la comanda 0x{op:X2}");
-            if (body[payload] != 0) throw new IOException($"placa a refuzat comanda 0x{op:X2} (eroare 0x{body[payload + 1]:X2})");
+            if (body.Length < payload + 2) throw new IOException(L.T($"răspuns scurt la comanda 0x{op:X2}", $"short reply to command 0x{op:X2}"));
+            if (body[payload] != 0) throw new IOException(L.T($"placa a refuzat comanda 0x{op:X2} (eroare 0x{body[payload + 1]:X2})", $"the board refused command 0x{op:X2} (error 0x{body[payload + 1]:X2})"));
             return new Reply(value, body);
         }
     }

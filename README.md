@@ -14,6 +14,8 @@ Butonul de sus schimbă ecranele: **CEAS** → **VREME** → **PC** → **VENTIL
 
 Apăsare lungă: LED **AUTO** (slab noaptea) / **MAX** / **OFF**.
 
+Aplicația, ecranul plăcii și pagina ei web sunt în română sau engleză (se alege în aplicație). / The app, the board screen and its web page are available in Romanian or English (chosen in the app).
+
 ```
 deskbuddy/
 ├── pc/windows/   aplicația de Windows (C#, .NET 10): sursa; exe-ul vine din Releases

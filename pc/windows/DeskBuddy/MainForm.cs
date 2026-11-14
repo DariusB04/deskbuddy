@@ -10,6 +10,7 @@ sealed class MainForm : Form
     readonly Label navStatus = Theme.Label("", Theme.Small, Theme.Muted);
     readonly List<(NavButton Btn, Control Page)> pages = [];
     int current = -1;
+    public bool Replacing;                            // fereastra e refăcută (altă limbă): închiderea nu ascunde și nu iese
 
     public MainForm(TrayApp app)
     {
@@ -28,7 +29,7 @@ sealed class MainForm : Form
         var nav = new Panel { Dock = DockStyle.Left, Width = S(220), BackColor = Theme.Nav, Padding = new Padding(S(10), S(18), S(10), S(14)) };
         var logo = new Panel { Dock = DockStyle.Top, Height = S(64), BackColor = Theme.Nav };
         logo.Controls.Add(new Label { Text = "DeskBuddy", Font = Theme.Logo, ForeColor = Theme.Fg, AutoSize = true, Location = new Point(S(12), 0) });
-        logo.Controls.Add(new Label { Text = "pentru Windows", Font = Theme.Small, ForeColor = Theme.Muted, AutoSize = true, Location = new Point(S(14), S(30)) });
+        logo.Controls.Add(new Label { Text = L.T("pentru Windows", "for Windows"), Font = Theme.Small, ForeColor = Theme.Muted, AutoSize = true, Location = new Point(S(14), S(30)) });
         navStatus.Dock = DockStyle.Bottom;
         navStatus.Padding = new Padding(S(12), 0, 0, 0);
         nav.Controls.Add(navList);                    // ordinea contează la Dock: ultimul adăugat se așază primul
@@ -39,12 +40,12 @@ sealed class MainForm : Form
         Controls.Add(content);                        // Fill întâi, ca să ia ce rămâne după meniul din stânga
         Controls.Add(nav);
 
-        AddPage("Acasă", new HomePage(app));
-        AddPage("Ecran", new ScreenPage(app));
-        AddPage("Placă", new BoardPage(app));
+        AddPage(L.T("Acasă", "Home"), new HomePage(app));
+        AddPage(L.T("Ecran", "Screen"), new ScreenPage(app));
+        AddPage(L.T("Placă", "Board"), new BoardPage(app));
         AddPage("PC", new PcPage(app));
         AddPage("Claude Code", new ClaudePage(app));
-        AddPage("Aplicație", new AppPage(app));
+        AddPage(L.T("Aplicație", "App"), new AppPage(app));
         ResumeLayout(true);
 
         app.Updated += OnUpdated;
@@ -65,11 +66,7 @@ sealed class MainForm : Form
         pages.Add((btn, page));
     }
 
-    public void ShowPage(string name)
-    {
-        int i = pages.FindIndex(p => p.Btn.Text == name);
-        if (i >= 0) Select(i);
-    }
+    public void ShowAppPage() => Select(pages.Count - 1);
 
     void Select(int index)
     {
@@ -90,17 +87,17 @@ sealed class MainForm : Form
     {
         if (app.UsbBoard is { } ub)
         {
-            navStatus.Text = $"● pe USB ({ub.Port})";
+            navStatus.Text = L.T($"● pe USB ({ub.Port})", $"● on USB ({ub.Port})");
             navStatus.ForeColor = Theme.Accent;
         }
         else if (app.WifiBoard is { } wb)
         {
-            navStatus.Text = $"● pe WiFi ({wb.Ip})";
+            navStatus.Text = L.T($"● pe WiFi ({wb.Ip})", $"● on WiFi ({wb.Ip})");
             navStatus.ForeColor = Theme.Accent;
         }
         else
         {
-            navStatus.Text = "● caut DeskBuddy...";
+            navStatus.Text = L.T("● caut DeskBuddy...", "● looking for DeskBuddy...");
             navStatus.ForeColor = Theme.Warn;
         }
         if (!Visible || current < 0) return;
@@ -118,7 +115,7 @@ sealed class MainForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
-        if (!app.Quitting && e.CloseReason == CloseReason.UserClosing && app.Settings.CloseToTray)
+        if (!Replacing && !app.Quitting && e.CloseReason == CloseReason.UserClosing && app.Settings.CloseToTray)
         {
             e.Cancel = true;
             Hide();
@@ -132,6 +129,6 @@ sealed class MainForm : Form
     {
         app.Updated -= OnUpdated;
         base.OnFormClosed(e);
-        if (!app.Quitting) app.Quit();                // X fără „ascunde în tray” = ieșire
+        if (!app.Quitting && !Replacing) app.Quit();  // X fără „ascunde în tray” = ieșire
     }
 }

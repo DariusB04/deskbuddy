@@ -21,7 +21,7 @@ sealed class FpsMonitor : IDisposable
 
     public FpsMonitor()
     {
-        if (TraceEventSession.IsElevated() != true) { Error = "FPS-ul cere drepturi de administrator"; return; }
+        if (TraceEventSession.IsElevated() != true) { Error = L.T("FPS-ul cere drepturi de administrator", "FPS needs administrator rights"); return; }
         new Thread(Run) { IsBackground = true, Name = "fps-etw" }.Start();
     }
 
@@ -35,7 +35,7 @@ sealed class FpsMonitor : IDisposable
             session.Source.AllEvents += OnEvent;
             session.Source.Process();                               // blochează până la Dispose
         }
-        catch (Exception e) { Error = "nu pot citi FPS-ul: " + e.Message; }
+        catch (Exception e) { Error = L.T("nu pot citi FPS-ul: ", "can't read FPS: ") + e.Message; }
     }
 
     void OnEvent(TraceEvent e)

@@ -24,7 +24,7 @@ sealed class PasswordDialog : Form
         box.UseSystemPasswordChar = true;
         box.Width = 380;
         var ok = Theme.Button("OK", primary: true);
-        var cancel = Theme.Button("Anulează");
+        var cancel = Theme.Button(L.T("Anulează", "Cancel"));
         ok.DialogResult = DialogResult.OK;
         cancel.DialogResult = DialogResult.Cancel;
         AcceptButton = ok;

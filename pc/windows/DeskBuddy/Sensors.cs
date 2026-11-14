@@ -99,6 +99,8 @@ sealed class Sensors : IDisposable
             RamT: used + avail) { Fans = fans };
     }
 
+    static string PumpLabel => L.T("POMPA", "PUMP");
+
     List<Fan> ReadFans()
     {
         var found = new List<(ISensor S, IHardware Hw, int Rank, string Base)>();
@@ -113,7 +115,7 @@ sealed class Sensors : IDisposable
                     if (!spun.Contains(id) && !gpu) continue;      // mufă fără ventilator (merge mereu 0)
                     string n = s.Name.ToLowerInvariant();
                     bool pump = n.Contains("pump") || n.Contains("pompa") || n.Contains("aio");
-                    var (rank, b) = pump ? (0, "POMPA")
+                    var (rank, b) = pump ? (0, PumpLabel)
                         : n.Contains("cpu") ? (1, "CPU")
                         : hw.HardwareType == HardwareType.Cooler ? (2, "AIO")
                         : gpu ? (4, "GPU")
@@ -133,12 +135,12 @@ sealed class Sensors : IDisposable
                 maxRpm[id] = Math.Max(maxRpm.GetValueOrDefault(id), rpm);
                 // comanda PWM a aceluiași canal (Control cu același index), altfel turația față de maximul văzut
                 var ctl = hw.Sensors.FirstOrDefault(c => c.SensorType == SensorType.Control && c.Index == s.Index && c.Value is float cv && float.IsFinite(cv));
-                float floor = b == "POMPA" ? 3000 : 1800;
+                float floor = b == PumpLabel ? 3000 : 1800;
                 float pct = ctl?.Value ?? 100f * rpm / Math.Max(maxRpm[id], floor);
                 // numărul din numele senzorului ("System Fan #3" -> SYS3), ca pe placa de bază; altfel al câtelea e
                 var num = System.Text.RegularExpressions.Regex.Match(s.Name, @"(\d+)\s*$");
-                string label = count > 1 ? (b == "POMPA" ? "POMP" : b) + (num.Success ? num.Groups[1].Value : k.ToString(CultureInfo.InvariantCulture)) : b;
-                list.Add(new Fan(label, rpm, Math.Clamp(pct, 0, 100), b == "POMPA"));
+                string label = count > 1 ? (b == PumpLabel ? L.T("POMP", "PUMP") : b) + (num.Success ? num.Groups[1].Value : k.ToString(CultureInfo.InvariantCulture)) : b;
+                list.Add(new Fan(label, rpm, Math.Clamp(pct, 0, 100), b == PumpLabel));
             }
         }
         return list.OrderBy(f => f.Pump ? 0 : 1).ToList();

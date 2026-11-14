@@ -11,7 +11,7 @@ sealed class ScreenPage : Page
     static readonly string[] LedNames = ["AUTO", "MAX", "OFF"];
     readonly TrayApp app;
     readonly OledView oled = new();
-    readonly Button prev = Theme.Button("◀  Înapoi"), next = Theme.Button("Următorul  ▶", primary: true), led = Theme.Button("LED: ?");
+    readonly Button prev = Theme.Button(L.T("◀  Înapoi", "◀  Back")), next = Theme.Button(L.T("Următorul  ▶", "Next  ▶"), primary: true), led = Theme.Button("LED: ?");
     readonly FlowLayoutPanel jump = new() { AutoSize = true, WrapContents = true, Margin = new Padding(0, 4, 0, 0), BackColor = Theme.Card, Tag = "fill" };
     readonly Label info = Note("");
     readonly List<Button> jumpButtons = [];
@@ -19,16 +19,16 @@ sealed class ScreenPage : Page
     int mode = -1;
     bool running, sending;
 
-    public ScreenPage(TrayApp app) : base("Ecran", "Ecranul plăcii, live, și butonul ei: îl poți folosi de aici dacă butonul fizic nu merge.")
+    public ScreenPage(TrayApp app) : base(L.T("Ecran", "Screen"), L.T("Ecranul plăcii, live, și butonul ei: îl poți folosi de aici dacă butonul fizic nu merge.", "The board's screen, live, and its button: you can use it from here if the physical button doesn't work."))
     {
         this.app = app;
-        var c = AddCard("Placa acum");
+        var c = AddCard(L.T("Placa acum", "The board now"));
         c.Controls.Add(oled);
         c.Controls.Add(Theme.Row(prev, next, led));
-        c.Controls.Add(Theme.FieldLabel("Sari direct pe"));
+        c.Controls.Add(Theme.FieldLabel(L.T("Sari direct pe", "Jump straight to")));
         c.Controls.Add(jump);
         c.Controls.Add(info);
-        c.Controls.Add(Note("Săgețile ← → și Space schimbă ecranul cât fereastra e deschisă pe pagina asta. „LED” = apăsarea lungă a butonului."));
+        c.Controls.Add(Note(L.T("Săgețile ← → și Space schimbă ecranul cât fereastra e deschisă pe pagina asta. „LED” = apăsarea lungă a butonului.", "The ← → arrows and Space change the screen while this page is open. “LED” = a long press of the button.")));
         prev.Click += async (_, _) => await PressAsync(new() { ["a"] = "prev" });
         next.Click += async (_, _) => await PressAsync(new() { ["a"] = "next" });
         led.Click += async (_, _) => await PressAsync(new() { ["a"] = "led" });
@@ -62,19 +62,19 @@ sealed class ScreenPage : Page
         {
             while (!IsDisposed && Visible && FindForm()?.Visible == true)
             {
-                if (!app.DeviceFound) { oled.Clear("placa nu e conectată"); SetButtons(false); await Task.Delay(1000); continue; }
+                if (!app.DeviceFound) { oled.Clear(L.T("placa nu e conectată", "the board isn't connected")); SetButtons(false); await Task.Delay(1000); continue; }
                 if (names.Count == 0) await LoadNamesAsync();
                 try
                 {
                     var r = await app.ApiAsync("/api/screen", timeoutMs: 3000);
                     if (r?["px"] is JsonValue px) oled.SetFrame(Convert.FromBase64String((string)px!), r["off"]?.GetValue<bool>() == true);
                     UpdateState((int?)r?["mode"] ?? -1, (int?)r?["led"] ?? -1);
-                    info.Text = app.UsbBoard != null ? "prin USB" : "prin WiFi";
+                    info.Text = app.UsbBoard != null ? L.T("prin USB", "over USB") : L.T("prin WiFi", "over WiFi");
                     info.ForeColor = Theme.Muted;
                     SetButtons(true);
                 }
-                catch (UnauthorizedAccessException) { oled.Clear("placa are parolă"); info.Text = "Pune parola plăcii în pagina Placă → Securitate."; await Task.Delay(3000); }
-                catch (Exception e) { info.Text = "Placa nu răspunde: " + e.Message; info.ForeColor = Theme.Warn; await Task.Delay(1000); }
+                catch (UnauthorizedAccessException) { oled.Clear(L.T("placa are parolă", "the board has a password")); info.Text = L.T("Pune parola plăcii în pagina Placă → Securitate.", "Enter the board's password on Board → Security."); await Task.Delay(3000); }
+                catch (Exception e) { info.Text = L.T("Placa nu răspunde: ", "The board isn't responding: ") + e.Message; info.ForeColor = Theme.Warn; await Task.Delay(1000); }
                 await Task.Delay(app.UsbBoard != null ? 120 : 80);
             }
         }
@@ -138,7 +138,7 @@ sealed class OledView : Control
     static readonly Color On = Color.FromArgb(110, 200, 255), Off = Color.FromArgb(10, 16, 22), Bezel = Color.FromArgb(4, 6, 8);
     byte[] frame = new byte[1024];
     bool dark = true;
-    string? message = "se încarcă...";
+    string? message = L.T("se încarcă...", "loading...");
 
     public OledView()
     {
@@ -154,7 +154,7 @@ sealed class OledView : Control
         if (buf.Length < 1024) return;
         frame = buf;
         dark = screenOff;
-        message = screenOff ? "ecranul e stins (noaptea)" : null;
+        message = screenOff ? L.T("ecranul e stins (noaptea)", "the screen is off (night)") : null;
         Invalidate();
     }
 
