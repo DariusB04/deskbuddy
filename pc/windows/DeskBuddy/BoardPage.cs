@@ -37,6 +37,7 @@ sealed class BoardPage : Page
     readonly ComboBox rot = Theme.Combo(200), idleMode = Theme.Combo(200), idleMin = Theme.Combo(170);
     readonly CheckBox autoClaude = Theme.Check("Sari pe CLAUDE când Claude Code începe să lucreze");
     readonly CheckBox autoGame = Theme.Check("Sari pe PC (temperaturi) când pornești un joc");
+    readonly CheckBox fanIcons = Theme.Check("VENTILATOARE: iconițe animate în loc de text (se învârt cu turația lor)");
     // Afișaj și LED
     readonly NumericUpDown ctr = Theme.Num(0, 100), nctr = Theme.Num(0, 100), ns = Theme.Num(0, 23, 64), ne = Theme.Num(0, 23, 64), np = Theme.Num(0, 100), ledp = Theme.Num(5, 100);
     readonly CheckBox nightOff = Theme.Check("Noaptea, ecranul stins (butonul îl aprinde 15 s)");
@@ -136,6 +137,7 @@ sealed class BoardPage : Page
         };
         c.Controls.Add(Theme.Row(addCustom));
         c.Controls.Add(screensNote);
+        c.Controls.Add(fanIcons);
         foreach (var r in Rotations) rot.Items.Add(r.Name);
         c.Controls.Add(Field("Schimbă ecranul singur", rot));
         c.Controls.Add(Theme.FieldLabel("Ecrane automate"));
@@ -159,7 +161,7 @@ sealed class BoardPage : Page
                 ["mord"] = string.Join(",", screens.Select(e => Idx(e).ToString(CultureInfo.InvariantCulture))),
                 ["cust"] = string.Join(";", customs.Select(e => CustomScreenDialog.CleanName(e.Name) + "|" + string.Join(",", e.Items.Select(i => i.ToString(CultureInfo.InvariantCulture))))),
                 ["rot"] = Rotations[Math.Max(0, rot.SelectedIndex)].Sec.ToString(CultureInfo.InvariantCulture),
-                ["aclaude"] = B(autoClaude), ["agame"] = B(autoGame),
+                ["aclaude"] = B(autoClaude), ["agame"] = B(autoGame), ["fico"] = B(fanIcons),
                 ["idlem"] = (idle == null ? -1 : Idx(idle)).ToString(CultureInfo.InvariantCulture),
                 ["idlet"] = IdleMins[Math.Max(0, idleMin.SelectedIndex)].ToString(CultureInfo.InvariantCulture),
             };
@@ -579,6 +581,8 @@ sealed class BoardPage : Page
         rot.SelectedIndex = Math.Max(0, Array.FindIndex(Rotations, x => x.Sec == r));
         autoClaude.Checked = c["aclaude"] == null || G("aclaude");
         autoGame.Checked = c["agame"] == null || G("agame");
+        fanIcons.Checked = G("fico");
+        fanIcons.Visible = c["fico"] != null;                 // firmware mai vechi de 2.4.0 n-are opțiunea
         int it = I("idlet", 10);
         idleMin.SelectedIndex = Math.Max(0, Array.FindIndex(IdleMins, x => x >= it));
         idleMin.Enabled = idleMode.SelectedIndex > 0;
