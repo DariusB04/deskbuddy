@@ -1,7 +1,7 @@
 # DeskBuddy – ESP32 + OLED + LED „sub birou”
 
 Un gadget de birou: ESP32 + ecran OLED 128×64 într-o carcasă printată 3D, ridicată pe 4 picioruțe, cu un LED RGB care luminează biroul de dedesubt.
-Butonul de sus schimbă ecranele: **CEAS** → **VREME** → **PC** → **VENTILATOARE** → **IMPRIMANTA** → **CLAUDE** → **SISTEM** → **MUZICA** (din pagina de setări alegi care apar).
+Butonul de sus schimbă ecranele: **CEAS** → **VREME** → **PC** → **VENTILATOARE** → **IMPRIMANTA** → **CLAUDE** → **SISTEM** → **MUZICA** (din pagina de setări alegi care apar; în aplicația de Windows le poți și reordona și îți poți face ecrane custom).
 
 - **CEAS**: ora cu cifre „dot-matrix”, data, secundele
 - **VREME**: acum + 3 zile (Open-Meteo, fără cont), după IP sau orașul ales

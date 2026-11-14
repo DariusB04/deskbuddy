@@ -24,8 +24,16 @@ sealed class BoardPage : Page
     bool loading;
 
     // Ecrane
-    readonly FlowLayoutPanel modes = new() { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Margin = new Padding(0) };
-    readonly List<CheckBox> modeChecks = [];
+    readonly FlowLayoutPanel screenList = new() { FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoSize = true, Margin = new Padding(0) };
+    readonly Button addCustom = Theme.Button("+ Ecran custom");
+    readonly Label screensNote = Note("");
+    /// un ecran din listă: Index = indexul de pe placă (la ecranele custom noi, -1 până la salvare)
+    sealed class ScreenEntry { public int Index = -1; public string Name = ""; public bool Custom; public bool On = true; public List<int> Items = []; }
+    readonly List<ScreenEntry> screens = [];
+    List<string> catalog = [];
+    int custMax = 24, itemMax = 6;
+    const int Builtins = 8;
+    ScreenEntry? idlePick;
     readonly ComboBox rot = Theme.Combo(200), idleMode = Theme.Combo(200), idleMin = Theme.Combo(170);
     readonly CheckBox autoClaude = Theme.Check("Sari pe CLAUDE când Claude Code începe să lucreze");
     readonly CheckBox autoGame = Theme.Check("Sari pe PC (temperaturi) când pornești un joc");
@@ -116,8 +124,18 @@ sealed class BoardPage : Page
     void BuildScreens()
     {
         var c = NewCard("Ecrane");
-        c.Controls.Add(Theme.FieldLabel("Ce ecrane apar la apăsarea butonului"));
-        c.Controls.Add(modes);
+        c.Controls.Add(Theme.FieldLabel("Ce ecrane apar la apăsarea butonului, în ordinea în care vin (▲ ▼ le mută)"));
+        c.Controls.Add(screenList);
+        addCustom.Click += (_, _) =>
+        {
+            if (screens.Count(x => x.Custom) >= custMax) { MessageBox.Show(FindForm(), $"Placa ține maxim {custMax} ecrane custom.", "DeskBuddy"); return; }
+            var r = CustomScreenDialog.Edit(FindForm(), "Ecran custom nou", "", [], catalog, itemMax, FanLabels());
+            if (r == null) return;
+            screens.Add(new ScreenEntry { Name = r.Value.Name, Custom = true, Items = r.Value.Items });
+            RenderScreens();
+        };
+        c.Controls.Add(Theme.Row(addCustom));
+        c.Controls.Add(screensNote);
         foreach (var r in Rotations) rot.Items.Add(r.Name);
         c.Controls.Add(Field("Schimbă ecranul singur", rot));
         c.Controls.Add(Theme.FieldLabel("Ecrane automate"));
@@ -128,17 +146,99 @@ sealed class BoardPage : Page
         c.Controls.Add(Note("Repausul vine când nu te joci, Claude nu lucrează și n-ai apăsat butonul de atâta timp, și imediat ce stingi PC-ul."));
         SaveRow(c, () =>
         {
-            int bits = 0;
-            for (int i = 0; i < modeChecks.Count; i++) if (modeChecks[i].Checked) bits |= 1 << i;
-            if (bits == 0) { MessageBox.Show(FindForm(), "Bifează cel puțin un ecran.", "DeskBuddy"); return null; }
+            if (!screens.Any(x => x.On)) { MessageBox.Show(FindForm(), "Bifează cel puțin un ecran.", "DeskBuddy"); return null; }
+            // indexurile noi: cele fixe rămân 0-7, cele custom primesc 8, 9, ... în ordinea în care apar în listă
+            var customs = screens.Where(x => x.Custom).ToList();
+            int Idx(ScreenEntry e) => e.Custom ? Builtins + customs.IndexOf(e) : e.Index;
+            ulong bits = 0;
+            foreach (var e in screens) if (e.On) bits |= 1UL << Idx(e);
+            var idle = idleMode.SelectedIndex > 0 && idleMode.SelectedIndex - 1 < screens.Count ? screens[idleMode.SelectedIndex - 1] : null;
             return new()
             {
-                ["modes"] = bits.ToString(CultureInfo.InvariantCulture), ["rot"] = Rotations[Math.Max(0, rot.SelectedIndex)].Sec.ToString(CultureInfo.InvariantCulture),
-                ["aclaude"] = B(autoClaude), ["agame"] = B(autoGame), ["idlem"] = (idleMode.SelectedIndex - 1).ToString(CultureInfo.InvariantCulture),
+                ["modes"] = bits.ToString(CultureInfo.InvariantCulture),
+                ["mord"] = string.Join(",", screens.Select(e => Idx(e).ToString(CultureInfo.InvariantCulture))),
+                ["cust"] = string.Join(";", customs.Select(e => CustomScreenDialog.CleanName(e.Name) + "|" + string.Join(",", e.Items.Select(i => i.ToString(CultureInfo.InvariantCulture))))),
+                ["rot"] = Rotations[Math.Max(0, rot.SelectedIndex)].Sec.ToString(CultureInfo.InvariantCulture),
+                ["aclaude"] = B(autoClaude), ["agame"] = B(autoGame),
+                ["idlem"] = (idle == null ? -1 : Idx(idle)).ToString(CultureInfo.InvariantCulture),
                 ["idlet"] = IdleMins[Math.Max(0, idleMin.SelectedIndex)].ToString(CultureInfo.InvariantCulture),
             };
         });
     }
+
+    List<string> FanLabels() => app.Latest?.Fans.Select(f => f.Label).ToList() ?? [];
+
+    static Button Small(string text)
+    {
+        var b = Theme.Button(text);
+        b.Padding = new Padding(4, 0, 4, 0);
+        b.Margin = new Padding(0, 2, 4, 2);
+        b.Font = Theme.Small;
+        return b;
+    }
+
+    /// lista de ecrane (după orice schimbare: mutare, ecran nou, ștergere)
+    void RenderScreens()
+    {
+        screenList.SuspendLayout();
+        screenList.Controls.Clear();
+        for (int i = 0; i < screens.Count; i++)
+        {
+            var e = screens[i];
+            int pos = i;
+            var cb = Theme.Check(e.Custom ? $"{e.Name}  ·  custom ({e.Items.Count})" : e.Name);
+            cb.AutoSize = false;
+            cb.Width = 250;
+            cb.Height = 26;
+            cb.Checked = e.On;
+            cb.CheckedChanged += (_, _) => e.On = cb.Checked;
+            var up = Small("▲");
+            var down = Small("▼");
+            up.Enabled = pos > 0;
+            down.Enabled = pos < screens.Count - 1;
+            up.Click += (_, _) => { (screens[pos - 1], screens[pos]) = (screens[pos], screens[pos - 1]); RenderScreens(); };
+            down.Click += (_, _) => { (screens[pos + 1], screens[pos]) = (screens[pos], screens[pos + 1]); RenderScreens(); };
+            var row = Theme.Row(cb, up, down);
+            if (e.Custom)
+            {
+                var edit = Small("Editează");
+                var del = Small("Șterge");
+                edit.Click += (_, _) =>
+                {
+                    var r = CustomScreenDialog.Edit(FindForm(), "Ecran custom", e.Name, e.Items, catalog, itemMax, FanLabels());
+                    if (r == null) return;
+                    e.Name = r.Value.Name;
+                    e.Items = r.Value.Items;
+                    RenderScreens();
+                };
+                del.Click += (_, _) =>
+                {
+                    if (MessageBox.Show(FindForm(), $"Ștergi ecranul „{e.Name}”? (se aplică la Salvează)", "DeskBuddy", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+                    screens.Remove(e);
+                    if (idlePick == e) idlePick = null;
+                    RenderScreens();
+                };
+                row.Controls.AddRange([edit, del]);
+            }
+            screenList.Controls.Add(row);
+        }
+        screenList.ResumeLayout();
+        addCustom.Enabled = catalog.Count > 0 && screens.Count(x => x.Custom) < custMax;
+        screensNote.Text = catalog.Count == 0
+            ? "Ecranele custom și ordinea cer firmware 2.3.0 sau mai nou pe placă."
+            : $"Ecrane custom: {screens.Count(x => x.Custom)} din {custMax}. Schimbările se aplică la Salvează.";
+
+        // ecranul de repaus: aceeași listă, păstrez alegerea
+        if (idleMode.SelectedIndex > 0 && idleMode.SelectedIndex - 1 < idleItems.Count) idlePick = idleItems[idleMode.SelectedIndex - 1];
+        idleItems = [.. screens];
+        idleMode.Items.Clear();
+        idleMode.Items.Add("fără");
+        foreach (var x in screens) idleMode.Items.Add(x.Name);
+        int k = idlePick == null ? -1 : screens.IndexOf(idlePick);
+        idleMode.SelectedIndex = k + 1;
+        idleMin.Enabled = idleMode.SelectedIndex > 0;
+    }
+    List<ScreenEntry> idleItems = [];
 
     void BuildDisplay()
     {
@@ -447,24 +547,38 @@ sealed class BoardPage : Page
 
         // ecrane
         var names = c["mnames"]?.AsArray().Select(x => (string?)x ?? "").ToList() ?? [];
-        int bits = I("modes", 0xFF);
-        modes.Controls.Clear();
-        modeChecks.Clear();
+        ulong bits = c["modes"] is JsonValue mv && mv.TryGetValue<ulong>(out ulong mb) ? mb : 0xFF;
+        catalog = c["citems"]?.AsArray().Select(x => (string?)x ?? "?").ToList() ?? [];
+        custMax = I("cmax", 0);
+        itemMax = I("cimax", 6);
+        var cust = S("cust").Split(';', StringSplitOptions.RemoveEmptyEntries);
+        var all = new List<ScreenEntry>();
         for (int i = 0; i < names.Count; i++)
         {
-            var cb = Theme.Check(names[i]);
-            cb.Checked = (bits & (1 << i)) != 0;
-            modeChecks.Add(cb);
-            modes.Controls.Add(cb);
+            var e = new ScreenEntry { Index = i, Name = names[i], Custom = i >= Builtins, On = (bits >> i & 1) != 0 };
+            if (e.Custom && i - Builtins < cust.Length)
+            {
+                var parts = cust[i - Builtins].Split('|');
+                if (parts.Length > 1)
+                    e.Items = parts[1].Split(',', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(x => int.TryParse(x, NumberStyles.Integer, CultureInfo.InvariantCulture, out int v) ? v : -1).Where(v => v >= 0).ToList();
+            }
+            all.Add(e);
         }
+        // în ordinea de pe placă ("mord"); placa veche n-o trimite: ordinea indexurilor
+        var order = c["mord"]?.AsArray().Select(x => (int?)x ?? -1).ToList() ?? [];
+        screens.Clear();
+        foreach (int i in order) if (i >= 0 && i < all.Count && !screens.Contains(all[i])) screens.Add(all[i]);
+        foreach (var e in all) if (!screens.Contains(e)) screens.Add(e);
+        int im = I("idlem", -1);
+        idlePick = im >= 0 && im < all.Count ? all[im] : null;
+        idleMode.SelectedIndex = -1;
+        idleItems = [];
+        RenderScreens();
         int r = I("rot");
         rot.SelectedIndex = Math.Max(0, Array.FindIndex(Rotations, x => x.Sec == r));
         autoClaude.Checked = c["aclaude"] == null || G("aclaude");
         autoGame.Checked = c["agame"] == null || G("agame");
-        idleMode.Items.Clear();
-        idleMode.Items.Add("fără");
-        foreach (var n in names) idleMode.Items.Add(n);
-        idleMode.SelectedIndex = Math.Clamp(I("idlem", 0) + 1, 0, idleMode.Items.Count - 1);
         int it = I("idlet", 10);
         idleMin.SelectedIndex = Math.Max(0, Array.FindIndex(IdleMins, x => x >= it));
         idleMin.Enabled = idleMode.SelectedIndex > 0;
