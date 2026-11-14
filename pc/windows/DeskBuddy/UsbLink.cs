@@ -290,6 +290,10 @@ sealed class UsbLink : IDisposable
         bool had = board != null;
         board = null;
         probing = null;
+        // anulează ce n-a plecat încă: închis cu scrieri în așteptare, driverul CP210x rămânea uneori blocat
+        // (următoarea deschidere dădea „semaphore timeout” până scoteai cablul)
+        try { if (port?.IsOpen == true) { port.DiscardOutBuffer(); port.DiscardInBuffer(); } }
+        catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException) { }
         try { port?.Close(); } catch (IOException) { }
         port?.Dispose();
         port = null;
@@ -299,6 +303,7 @@ sealed class UsbLink : IDisposable
     public void Dispose()
     {
         stop = true;
+        thread.Join(1500);                            // bucla nu mai atinge portul cât îl închidem
         Close();
     }
 }
