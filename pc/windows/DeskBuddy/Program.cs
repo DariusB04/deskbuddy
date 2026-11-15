@@ -37,6 +37,8 @@ static class Program
                 return TrayApp.WriteIco(args.Length > 1 ? args[1] : "DeskBuddy.ico");
             case "usb-flash":                         // DeskBuddy.exe usb-flash COM3 <fișier.bin|-> probe|keep|full (pentru teste / depanare)
                 return EspFlasher.Cli(args);
+            case "perf":                              // DeskBuddy.exe perf: cât durează fereastra și paginile (optimizări)
+                return Perf.Run();
             case "fans":                              // DeskBuddy.exe fans: senzorii de ventilatoare (depanare; ca admin vede și placa de bază)
             {
                 using var s = new Sensors();

@@ -91,6 +91,7 @@ sealed class BoardPage : Page
         var web = Theme.Button(L.T("Pagina plăcii în browser", "Board page in the browser"));
         web.Click += (_, _) => { if (app.DeviceUrl is { } u) Open(u); else Fail(state, L.T("Pagina web se deschide doar când placa e în aceeași rețea cu PC-ul.", "The web page only opens when the board is on the same network as the PC.")); };
         top.Controls.Add(Theme.Row(reload, web));
+        AddRow(sectionBar);
 
         BuildScreens();
         BuildDisplay();
@@ -100,6 +101,40 @@ sealed class BoardPage : Page
         BuildClaude();
         BuildSecurity();
         SetEnabled(false);
+
+        // o singură secțiune odată: controalele celorlalte nu-și creează ferestrele Windows până nu intri în ele
+        // (înainte, toate cele 7 carduri: ~0.8 s doar ca pagina să devină vizibilă, de câteva ori mai mult pe un PC slab)
+        for (int i = 0; i < cards.Count; i++)
+        {
+            int k = i;
+            var b = Theme.Button(cards[i].Title);
+            b.Margin = new Padding(0, 0, 6, 6);
+            b.Click += (_, _) => ShowSection(k);
+            sectionButtons.Add(b);
+            sectionBar.Controls.Add(b);
+        }
+        ShowSection(0);
+    }
+
+    readonly FlowLayoutPanel sectionBar = new() { AutoSize = true, WrapContents = true, Margin = new Padding(0, 0, 0, 8), BackColor = Theme.Bg, MaximumSize = new Size(780, 0) };
+    readonly List<Button> sectionButtons = [];
+    int section = -1;
+
+    void ShowSection(int k)
+    {
+        if (k == section) return;
+        section = k;
+        SuspendLayout();
+        for (int i = 0; i < cards.Count; i++)
+        {
+            cards[i].Visible = i == k;
+            bool on = i == k;
+            sectionButtons[i].BackColor = on ? Theme.Accent : Theme.Input;
+            sectionButtons[i].ForeColor = on ? Theme.Bg : Theme.Fg;
+            sectionButtons[i].FlatAppearance.BorderColor = on ? Theme.Accent : Theme.Line;
+        }
+        ResumeLayout(true);
+        AutoScrollPosition = Point.Empty;
     }
 
     static RadioButton Radio(string text) => new() { Text = text, AutoSize = true, Font = Theme.Body, ForeColor = Theme.Fg, Margin = new Padding(0, 4, 16, 4), Cursor = Cursors.Hand };

@@ -14,11 +14,18 @@ abstract class Page : Panel
         BackColor = Theme.Bg, Location = new Point(32, 24), Margin = new Padding(0),
     };
 
+    // cât se construiește pagina, aranjarea e suspendată: altfel fiecare control adăugat rearanja tot (O(n²))
+    bool building = true;
+    readonly List<Card> buildCards = [];
+
     protected Page(string title, string subtitle)
     {
+        SuspendLayout();
+        stack.SuspendLayout();
         Dock = DockStyle.Fill;
         BackColor = Theme.Bg;
         AutoScroll = true;
+        DoubleBuffered = true;
         stack.Controls.Add(Theme.Label(title, Theme.Title));
         var sub = Theme.Label(subtitle, Theme.Body, Theme.Muted);
         sub.Margin = new Padding(0, 0, 0, 18);
@@ -30,23 +37,53 @@ abstract class Page : Panel
     protected Card AddCard(string title)
     {
         var c = new Card(title);
+        if (building) { c.SuspendLayout(); buildCards.Add(c); }
         stack.Controls.Add(c);
+        fitWidth = -1;                                    // card nou (ex. temperatura CPU, apărut mai târziu): aranjare din nou
         return c;
     }
 
     protected static Label Note(string text) => Theme.Label(text, Theme.Small, Theme.Muted);
 
-    void Fit()
+    /// un rând oarecare între carduri (ex. bara de secțiuni a paginii Placă)
+    protected void AddRow(Control c) => stack.Controls.Add(c);
+
+    int fitWidth = -1;
+
+    /// lățimea cardurilor după fereastră. Fiecare MaximumSize schimbat reface aranjarea paginii, deci totul se face
+    /// cu aranjarea suspendată (o singură trecere la final) și doar când lățimea s-a schimbat
+    protected void Fit(bool force = false)
     {
         int w = Math.Clamp(ClientSize.Width - 64, 320, 780);
+        if (w == fitWidth && !force) return;
+        fitWidth = w;
+        SuspendLayout();
+        stack.SuspendLayout();
+        var cards = new List<Card>();
         foreach (Control c in stack.Controls)
         {
-            if (c is Card card) card.FitWidth(w);
+            if (c is Card card) { card.SuspendLayout(); card.FitWidth(w); cards.Add(card); }
             else if (c is Label l) l.MaximumSize = new Size(w, 0);
         }
+        foreach (var card in cards) card.ResumeLayout(false);
+        stack.ResumeLayout(true);
+        ResumeLayout(true);
     }
 
-    public virtual void OnShown() { Fit(); RefreshData(); }
+    public virtual void OnShown() { EndBuild(); Fit(); RefreshData(); }
+
+    /// prima afișare: aranjarea suspendată la construcție se face acum, o singură dată
+    void EndBuild()
+    {
+        if (!building) return;
+        building = false;
+        foreach (var c in buildCards) c.ResumeLayout(false);
+        buildCards.Clear();
+        stack.ResumeLayout(false);
+        ResumeLayout(false);
+        fitWidth = -1;
+    }
+    public void FitIfNeeded() => Fit();
     public virtual void RefreshData() { }
 
     protected static void Open(string target)
@@ -472,10 +509,24 @@ sealed class AppPage : Page
         info.Controls.Add(Theme.Row(folder, exit));
     }
 
-    void RefreshPorts()
+    /// porturile (registry) și driverele lipsă se citesc pe fundal: pe un PC slab țineau pagina blocată
+    async Task RefreshPortsAsync()
+    {
+        var (found, missing) = await Task.Run(() =>
+        {
+            var l = TrayApp.UsbPorts();
+            return (l, l.Count == 0 ? UsbLink.MissingDrivers().FirstOrDefault() : default);
+        });
+        if (IsDisposed) return;
+        ApplyPorts(found, missing);
+    }
+
+    void RefreshPorts() => _ = RefreshPortsAsync();
+
+    void ApplyPorts(List<UsbLink.PortInfo> found, (string? Chip, string? DriverUrl) missing)
     {
         string? keep = usbPort.SelectedIndex >= 0 && usbPort.SelectedIndex < ports.Count ? ports[usbPort.SelectedIndex].Name : null;
-        ports = TrayApp.UsbPorts();
+        ports = found;
         usbPort.Items.Clear();
         foreach (var p in ports)
             usbPort.Items.Add(app.UsbBoard?.Port == p.Name ? $"{p} · DeskBuddy {app.UsbBoard.Version}" : p.ToString());
@@ -483,7 +534,7 @@ sealed class AppPage : Page
         {
             usbPort.Items.Add(L.T("nicio placă pe USB", "no board on USB"));
             usbPort.SelectedIndex = 0;
-            missingDriver = UsbLink.MissingDrivers().FirstOrDefault();
+            missingDriver = missing;
         }
         else missingDriver = default;
         usbDriver.Visible = missingDriver.Chip != null;
@@ -604,8 +655,8 @@ sealed class AppPage : Page
         updating = false;
         privRepo.Text = app.Settings.FirmwareRepo;
         RefreshPrivate();
-        RefreshPorts();
-        RefreshAutostart("");
+        _ = RefreshPortsAsync();
+        _ = RefreshAutostartAsync();
         string ver = typeof(AppPage).Assembly.GetName().Version?.ToString(3) ?? "?";
         about.Text = L.T($"DeskBuddy pentru Windows {ver}\n{Environment.ProcessPath}\n", $"DeskBuddy for Windows {ver}\n{Environment.ProcessPath}\n") +
                      (Autostart.IsAdmin ? L.T("Rulează ca administrator.", "Running as administrator.") : L.T("Rulează fără drepturi de administrator.", "Running without administrator rights."));
@@ -621,10 +672,17 @@ sealed class AppPage : Page
         else { privInfo.Text = app.Settings.HasPrivateFirmware ? L.T("Salvat. Apasă „Verifică acum”.", "Saved. Press “Check now”.") : L.T("Neconfigurat.", "Not set up."); privInfo.ForeColor = Theme.Muted; }
     }
 
-    void RefreshAutostart(string error)
+    /// „Pornește cu Windows” = există task-ul programat: schtasks e un proces separat (sute de ms), deci pe fundal
+    async Task RefreshAutostartAsync(string error = "")
+    {
+        bool on = await Task.Run(Autostart.IsEnabled);
+        if (!IsDisposed) RefreshAutostart(error, on);
+    }
+
+    void RefreshAutostart(string error, bool? known = null)
     {
         updating = true;
-        autostart.Checked = Autostart.IsEnabled();
+        autostart.Checked = known ?? Autostart.IsEnabled();
         updating = false;
         autostartInfo.Text = error.Length > 0 ? error
             : autostart.Checked ? L.T("Task programat „DeskBuddy”: pornește la logare, în tray, fără prompt UAC.", "Scheduled task “DeskBuddy”: starts at sign-in, in the tray, without a UAC prompt.")

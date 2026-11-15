@@ -131,7 +131,7 @@ sealed class HomePage : Page
             "lucreaza" => "working", "te asteapta" => "waiting for you", _ => cs,
         } : cs);
         claude.ForeColor = cs is "lucreaza" or "te asteapta" ? Theme.Accent : Theme.Fg;
-        var u = ClaudeBridge.ReadUsage();
+        var u = CachedUsage();
         long nowS = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         double? h = u?.H, w = u?.W;
         if (u != null && u.Hr > 0 && nowS >= u.Hr) h = 0;
@@ -202,6 +202,25 @@ sealed class HomePage : Page
             static string T(double s) => s >= 3600 ? $"{(int)s / 3600}:{(int)s / 60 % 60:00}:{(int)s % 60:00}" : $"{(int)s / 60}:{(int)s % 60:00}";
             mediaBar.Set($"{T(pos)} / {T(du)}", (float)(100 * pos / du), Theme.Accent);
         }
+    }
+
+    ClaudeBridge.Usage? usage;
+    DateTime usageStamp;
+    long usageAt = -10_000;
+
+    /// usage-ul Claude din fișier: recitit doar la 5 s și doar dacă fișierul s-a schimbat (înainte: în fiecare secundă)
+    ClaudeBridge.Usage? CachedUsage()
+    {
+        long now = Environment.TickCount64;
+        if (now - usageAt < 5000) return usage;
+        usageAt = now;
+        try
+        {
+            var t = File.GetLastWriteTimeUtc(ClaudeBridge.UsageCache);
+            if (t != usageStamp) { usageStamp = t; usage = ClaudeBridge.ReadUsage(); }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        return usage;
     }
 
     static Color Usage(double? p) => p switch { null => Theme.Muted, < 70 => Theme.Accent, < 90 => Theme.Warn, _ => Theme.Bad };

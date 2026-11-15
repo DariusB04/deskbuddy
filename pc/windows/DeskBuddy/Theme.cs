@@ -116,8 +116,11 @@ static class Theme
 /// Lățimea o dă pagina (FitWidth); controalele cu Tag = "fill" iau toată lățimea, etichetele se rup pe rânduri.
 sealed class Card : FlowLayoutPanel
 {
+    public string Title { get; }
+
     public Card(string title)
     {
+        Title = title;
         FlowDirection = FlowDirection.TopDown;
         WrapContents = false;
         AutoSize = true;

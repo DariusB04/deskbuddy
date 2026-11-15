@@ -8,9 +8,11 @@ sealed class MainForm : Form
     readonly Panel content = new() { Dock = DockStyle.Fill, BackColor = Theme.Bg };
     readonly FlowLayoutPanel navList = new() { FlowDirection = FlowDirection.TopDown, WrapContents = false, Dock = DockStyle.Top, AutoSize = true, BackColor = Theme.Nav };
     readonly Label navStatus = Theme.Label("", Theme.Small, Theme.Muted);
-    readonly List<(NavButton Btn, Control Page)> pages = [];
+    readonly List<(NavButton Btn, Func<Control> Make)> pages = [];
+    readonly Dictionary<int, Control> built = [];
     int current = -1;
-    public bool Replacing;                            // fereastra e refăcută (altă limbă): închiderea nu ascunde și nu iese
+    public bool Replacing;
+    public static bool PerfLog;                            // fereastra e refăcută (altă limbă): închiderea nu ascunde și nu iese
 
     public MainForm(TrayApp app)
     {
@@ -40,12 +42,13 @@ sealed class MainForm : Form
         Controls.Add(content);                        // Fill întâi, ca să ia ce rămâne după meniul din stânga
         Controls.Add(nav);
 
-        AddPage(L.T("Acasă", "Home"), new HomePage(app));
-        AddPage(L.T("Ecran", "Screen"), new ScreenPage(app));
-        AddPage(L.T("Placă", "Board"), new BoardPage(app));
-        AddPage("PC", new PcPage(app));
-        AddPage("Claude Code", new ClaudePage(app));
-        AddPage(L.T("Aplicație", "App"), new AppPage(app));
+        // paginile se construiesc abia când intri prima dată în ele (Placă are câteva sute de controale)
+        AddPage(L.T("Acasă", "Home"), () => new HomePage(app));
+        AddPage(L.T("Ecran", "Screen"), () => new ScreenPage(app));
+        AddPage(L.T("Placă", "Board"), () => new BoardPage(app));
+        AddPage("PC", () => new PcPage(app));
+        AddPage("Claude Code", () => new ClaudePage(app));
+        AddPage(L.T("Aplicație", "App"), () => new AppPage(app));
         ResumeLayout(true);
 
         app.Updated += OnUpdated;
@@ -55,32 +58,50 @@ sealed class MainForm : Form
 
     int S(int px) => (int)Math.Round(px * DeviceDpi / 96.0);
 
-    void AddPage(string name, Control page)
+    void AddPage(string name, Func<Control> make)
     {
         int index = pages.Count;
         var btn = new NavButton(name) { Width = S(200) };
         btn.Click += (_, _) => Select(index);
         navList.Controls.Add(btn);
-        page.Visible = false;
-        content.Controls.Add(page);
-        pages.Add((btn, page));
+        pages.Add((btn, make));
+    }
+
+    Control PageAt(int i)
+    {
+        if (built.TryGetValue(i, out var p)) return p;
+        p = pages[i].Make();
+        p.Visible = false;
+        content.Controls.Add(p);
+        built[i] = p;
+        return p;
     }
 
     public void ShowAppPage() => Select(pages.Count - 1);
+
+    // pentru DeskBuddy.exe perf
+    public int PageCount => pages.Count;
+    public string PageName(int i) => pages[i].Btn.Text;
+    public void SelectPage(int i) => Select(i);
+    public void TickForPerf() => OnUpdated();
 
     void Select(int index)
     {
         if (index == current) return;
         current = index;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var page = PageAt(index);
+        long tMake = sw.ElapsedMilliseconds;
+        content.SuspendLayout();
         for (int i = 0; i < pages.Count; i++)
         {
             pages[i].Btn.Selected = i == index;
-            pages[i].Page.Visible = i == index;
+            if (built.TryGetValue(i, out var p)) p.Visible = i == index;
         }
-        switch (pages[index].Page)
-        {
-            case Page p: p.OnShown(); break;
-        }
+        content.ResumeLayout(true);
+        long tVis = sw.ElapsedMilliseconds;
+        if (page is Page pg) pg.OnShown();
+        if (PerfLog) Console.WriteLine($"   [{pages[index].Btn.Text}] construit {tMake} ms, vizibil {tVis - tMake} ms, OnShown {sw.ElapsedMilliseconds - tVis} ms");
     }
 
     void OnUpdated()
@@ -100,11 +121,8 @@ sealed class MainForm : Form
             navStatus.Text = L.T("● caut DeskBuddy...", "● looking for DeskBuddy...");
             navStatus.ForeColor = Theme.Warn;
         }
-        if (!Visible || current < 0) return;
-        switch (pages[current].Page)
-        {
-            case Page p: p.RefreshData(); break;
-        }
+        if (!Visible || current < 0 || !built.TryGetValue(current, out var page)) return;
+        if (page is Page p) { p.RefreshData(); p.FitIfNeeded(); }
     }
 
     protected override void OnHandleCreated(EventArgs e)
