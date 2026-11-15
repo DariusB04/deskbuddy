@@ -5,7 +5,7 @@ Butonul de sus schimbă ecranele: **CEAS** → **VREME** → **PC** → **VENTIL
 
 - **CEAS**: ora cu cifre „dot-matrix”, data, secundele
 - **VREME**: acum + 3 zile (Open-Meteo, fără cont), după IP sau orașul ales
-- **PC**: temperaturi și load CPU / GPU / RAM de la PC (aplicația de Windows sau scriptul de Linux)
+- **PC**: temperaturi și load CPU / GPU / RAM de la PC (aplicația de Windows sau scriptul de Linux); până la 4 PC-uri deodată, câte un rând pe PC
 - **VENTILATOARE**: turația ventilatoarelor și a pompei AIO (aplicația de Windows, pornită ca admin); se așază după câte sunt
 - **IMPRIMANTA**: Bambu Lab (cloud sau LAN): progres, timp rămas, temperaturi; sare singur pe ecran când se termină un print
 - **CLAUDE**: ce face Claude Code acum (lucrează / te așteaptă / gata), usage-ul pe 5 ore și 7 zile, plus „Bit”, un roboțel animat

@@ -273,6 +273,8 @@ def collect(args):
         d.update(read_nvidia_smi())
     d = {k: round(v, 1) for k, v in d.items() if v is not None}
     d.update(read_game())
+    # numele PC-ului: placa ține separat până la 4 PC-uri și le arată pe toate pe ecranul PC
+    d["id"] = "".join(c for c in socket.gethostname().split(".")[0] if 32 <= ord(c) < 127)[:12] or "PC"
     return d
 
 

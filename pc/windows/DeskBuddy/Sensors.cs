@@ -8,13 +8,21 @@ namespace DeskBuddy;
 /// O citire: temperaturi + load. null = senzor indisponibil.
 sealed record Stats(float? CpuT, float? CpuL, float? GpuT, float? GpuL, float? RamL, float? RamU, float? RamT)
 {
+    /// numele PC-ului pe placă (ASCII, max 12)
+    public static readonly string PcName = MakeName(Environment.MachineName);
+    static string MakeName(string n)
+    {
+        var s = new string(n.Where(c => c >= 32 && c < 127).ToArray());
+        return s.Length == 0 ? "PC" : s.Length > 12 ? s[..12] : s;
+    }
+
     /// ventilatoarele și pompa AIO, în ordinea de pe ecranul plăcii (pompa întâi)
     public IReadOnlyList<Fan> Fans { get; init; } = [];
 
     /// Același format ca pc_stats_sender.py (cheile pe care le citește firmware-ul în handleUdp).
     public byte[] ToPacket(string? game = null, float? fps = null, float? frameMs = null)
     {
-        var o = new JsonObject();
+        var o = new JsonObject { ["id"] = PcName };       // placa ține separat până la 4 PC-uri, după nume
         if (!string.IsNullOrEmpty(game))                       // jocul pornit (placa sare pe ecranul PC) + FPS-ul lui
         {
             o["g"] = game;
