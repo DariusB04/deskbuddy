@@ -108,6 +108,10 @@ static class Relay
 
     static bool AppListening()
     {
+#if !WINDOWS
+        try { using var probe = new UdpClient(new IPEndPoint(IPAddress.Loopback, Port)); return false; }
+        catch (SocketException) { return true; }
+#else
         try
         {
             if (!System.Threading.EventWaitHandleAcl.TryOpenExisting(ReadyName, System.Security.AccessControl.EventWaitHandleRights.Synchronize, out var h)) return false;
@@ -115,6 +119,7 @@ static class Relay
             return true;
         }
         catch (UnauthorizedAccessException) { return true; }
+#endif
     }
 
     /// aplicația: ascultă pe 127.0.0.1:4211 și dă mai departe fiecare pachet; null dacă portul e ocupat
@@ -123,11 +128,15 @@ static class Relay
         UdpClient client;
         try { client = new UdpClient(new IPEndPoint(IPAddress.Loopback, Port)); }
         catch (SocketException) { return null; }
+#if WINDOWS
         var everyone = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.WorldSid, null);
         var sec = new System.Security.AccessControl.EventWaitHandleSecurity();
         sec.AddAccessRule(new System.Security.AccessControl.EventWaitHandleAccessRule(everyone,
             System.Security.AccessControl.EventWaitHandleRights.Synchronize, System.Security.AccessControl.AccessControlType.Allow));
         var ready = System.Threading.EventWaitHandleAcl.Create(false, EventResetMode.ManualReset, ReadyName, out _, sec);
+#else
+        EventWaitHandle? ready = null;
+#endif
         var t = new Thread(() =>
         {
             var from = new IPEndPoint(IPAddress.Any, 0);
@@ -144,8 +153,8 @@ static class Relay
         return new Listener(client, ready);
     }
 
-    sealed class Listener(UdpClient client, EventWaitHandle ready) : IDisposable
+    sealed class Listener(UdpClient client, EventWaitHandle? ready) : IDisposable
     {
-        public void Dispose() { ready.Dispose(); client.Dispose(); }
+        public void Dispose() { ready?.Dispose(); client.Dispose(); }
     }
 }

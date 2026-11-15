@@ -247,8 +247,10 @@ sealed class EspFlasher : IDisposable
     /// schimbare (lent pe USB), iar între cele două linii placa apucă să iasă din reset cu IO0 sus (pornește normal)
     void Lines(bool? dtr, bool? rts)
     {
-        var h = port.BaseStream.GetType().GetField("_handle", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                    ?.GetValue(port.BaseStream) as Microsoft.Win32.SafeHandles.SafeFileHandle;
+        var h = OperatingSystem.IsWindows()
+            ? port.BaseStream.GetType().GetField("_handle", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                  ?.GetValue(port.BaseStream) as Microsoft.Win32.SafeHandles.SafeFileHandle
+            : null;                                       // Linux: proprietățile (ioctl TIOCMSET), destul de rapide acolo
         if (h == null || h.IsInvalid)
         {
             if (dtr is bool d0) port.DtrEnable = d0;

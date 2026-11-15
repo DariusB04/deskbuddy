@@ -327,7 +327,7 @@ sealed class ClaudePage : Page
         h5.Set(h is double a ? $"{a:0}%" : "--", (float?)h, UsageColor(h), ResetText(u.Hr, now));
         d7.Set(w is double b ? $"{b:0}%" : "--", (float?)w, UsageColor(w), ResetText(u.Wr, now));
         string ago = u.At > 0 ? Ago(now - u.At) : "?";
-        usageInfo.Text = $"{(u.Model.Length > 0 ? u.Model + " · " : "")}citit {ago}";
+        usageInfo.Text = $"{(u.Model.Length > 0 ? u.Model + " · " : "")}{L.T("citit ", "read ")}{ago}";
     }
 
     static Color UsageColor(double? p) => p switch { null => Theme.Muted, < 70 => Theme.Accent, < 90 => Theme.Warn, _ => Theme.Bad };

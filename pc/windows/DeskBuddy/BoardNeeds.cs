@@ -26,7 +26,7 @@ sealed class BoardNeeds(Func<byte[], bool> send) : IDisposable
     static HttpClient CreateClient()
     {
         var c = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-        c.DefaultRequestHeaders.UserAgent.ParseAdd("DeskBuddy-Windows");
+        c.DefaultRequestHeaders.UserAgent.ParseAdd(OperatingSystem.IsWindows() ? "DeskBuddy-Windows" : "DeskBuddy-Linux");
         return c;
     }
 

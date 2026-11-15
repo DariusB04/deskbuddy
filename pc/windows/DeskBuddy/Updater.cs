@@ -16,7 +16,12 @@ sealed record Asset(string Url, string ApiUrl, long Size, string? Sha256);
 /// Update-uri din GitHub Releases (repo public, fără token). Repo-ul vine din build (-p:GitHubRepo=owner/repo).
 static class Updater
 {
-    public const string AppAsset = "DeskBuddy-Windows.zip";
+    /// aplicația pentru sistemul curent: zip-ul cu DeskBuddy.exe pe Windows, AppImage-ul pe Linux
+    public static string AppAsset => OperatingSystem.IsWindows() ? "DeskBuddy-Windows.zip" : "DeskBuddy-Linux.AppImage";
+
+    /// fișierul aplicației: DeskBuddy.exe, sau AppImage-ul (variabila APPIMAGE, pusă de AppImage la pornire)
+    public static string SelfPath => Environment.GetEnvironmentVariable("APPIMAGE") is { Length: > 0 } ai ? ai
+        : Environment.ProcessPath ?? throw new InvalidOperationException(L.T("nu știu unde e aplicația", "don't know where the app is"));
     public const string FirmwareAsset = "DeskBuddy.ino.bin";
     public const string FlashAsset = "DeskBuddy-flash.bin";
 
@@ -32,7 +37,7 @@ static class Updater
     static HttpClient CreateClient()
     {
         var c = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
-        c.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("DeskBuddy-Windows", Normalize(typeof(Updater).Assembly.GetName().Version ?? new Version(0, 0)).ToString(3)));
+        c.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue(OperatingSystem.IsWindows() ? "DeskBuddy-Windows" : "DeskBuddy-Linux", Normalize(typeof(Updater).Assembly.GetName().Version ?? new Version(0, 0)).ToString(3)));
         c.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         c.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
         return c;
@@ -108,6 +113,7 @@ static class Updater
     /// hook-urile Claude și task-ul de pornire merg mai departe.
     public static void InstallApp(byte[] zip)
     {
+        if (!OperatingSystem.IsWindows()) { InstallAppImage(zip); return; }
         string exe = Environment.ProcessPath ?? throw new InvalidOperationException(L.T("nu știu unde e DeskBuddy.exe", "don't know where DeskBuddy.exe is"));
         string fresh = exe + ".new", old = exe + ".old";
         using (var archive = new ZipArchive(new MemoryStream(zip), ZipArchiveMode.Read))
@@ -120,6 +126,17 @@ static class Updater
         File.Move(exe, old);
         try { File.Move(fresh, exe); }
         catch { File.Move(old, exe); throw; }            // pune la loc versiunea veche
+    }
+
+    /// Linux: noul AppImage scris lângă cel vechi, făcut executabil, apoi mutat peste el (un fișier care rulează se poate înlocui)
+    static void InstallAppImage(byte[] image)
+    {
+        string path = SelfPath, fresh = path + ".new";
+        File.WriteAllBytes(fresh, image);
+        if (!OperatingSystem.IsWindows())
+            File.SetUnixFileMode(fresh, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                                        UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+        File.Move(fresh, path, overwrite: true);
     }
 
     public static void CleanupOld()

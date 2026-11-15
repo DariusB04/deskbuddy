@@ -19,6 +19,7 @@ Aplicația, ecranul plăcii și pagina ei web sunt în română sau engleză (se
 ```
 deskbuddy/
 ├── pc/windows/   aplicația de Windows (C#, .NET 10): sursa; exe-ul vine din Releases
+├── pc/linux/     aplicația de Linux (Avalonia, cod comun cu cea de Windows); AppImage-ul vine din Releases
 ├── pc/           pc_stats_sender.py, claude_bridge.py (Linux)
 ├── cad/          deskbuddy_cad.py – modelul parametric al carcasei (CadQuery); deskbuddy_v2_cad.py = carcasa v2
 └── stl/ step/    piesele carcasei
@@ -98,7 +99,21 @@ Cu „Pornește cu Windows” bifat, și dublu-click pe exe pornește aplicația
 Linie de comandă: `DeskBuddy.exe claude-install` / `claude-uninstall`; `DESKBUDDY_HOST=192.168.1.77` trimite doar la IP-ul ăla, `DESKBUDDY_DEBUG=1` scrie în stderr ce trimite.
 Build din sursă (`pc/windows/DeskBuddy/`, .NET 10 SDK): `dotnet publish -c Release -o ..`
 
-### Linux
+### Linux: aplicația DeskBuddy (AppImage)
+Aceeași aplicație ca pe Windows (Acasă, Ecran, Placă, PC, Claude Code, Aplicație, iconiță în tray), din release: `DeskBuddy-Linux.AppImage`.
+```
+chmod +x DeskBuddy-Linux.AppImage
+./DeskBuddy-Linux.AppImage
+```
+- Temperaturile, load-ul și ventilatoarele vin din `/sys/class/hwmon` și `/proc` (modulele k10temp / coretemp), placa video NVIDIA prin `nvidia-smi`.
+- Jocul: numele din Steam; FPS-ul din MangoHud (în `~/.config/MangoHud/MangoHud.conf`: `autostart_log=1`, `log_duration=0`, `output_folder=...`).
+- Ce se redă: prin `playerctl` (pachetul cu același nume).
+- Pe USB, utilizatorul trebuie să fie în grupul `dialout`: `sudo usermod -aG dialout $USER`, apoi relogare.
+- Iconița din tray: merge pe KDE, Cinnamon, XFCE; pe GNOME cere extensia „AppIndicator”.
+- „Pornește la logare” (pagina Aplicație) pune un `.desktop` în `~/.config/autostart`. Update-urile se instalează din aplicație, ca pe Windows.
+Sursa: `pc/linux/DeskBuddy/` (Avalonia, .NET 10); logica e comună cu aplicația de Windows (fișierele din `pc/windows/DeskBuddy/`).
+
+### Linux: doar scripturile (fără fereastră)
 ```
 pip install psutil
 python3 pc/pc_stats_sender.py --verbose

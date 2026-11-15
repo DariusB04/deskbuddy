@@ -102,11 +102,11 @@ static class ClaudeBridge
         {
             string cmd = Str(JsonNode.Parse(File.ReadAllText(BackupSl))?["command"]);
             if (cmd.Length == 0) return "";
-            var psi = new ProcessStartInfo("cmd.exe", $"/d /s /c \"{cmd}\"")
-            {
-                RedirectStandardInput = true, RedirectStandardOutput = true, UseShellExecute = false, CreateNoWindow = true,
-                StandardOutputEncoding = Encoding.UTF8,
-            };
+            var psi = OperatingSystem.IsWindows() ? new ProcessStartInfo("cmd.exe", $"/d /s /c \"{cmd}\"") : new ProcessStartInfo("/bin/sh", ["-c", cmd]);
+            psi.RedirectStandardInput = psi.RedirectStandardOutput = true;
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            psi.StandardOutputEncoding = Encoding.UTF8;
             using var p = Process.Start(psi)!;
             p.StandardInput.Write(raw);
             p.StandardInput.Close();

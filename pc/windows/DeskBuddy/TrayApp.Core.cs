@@ -1,9 +1,7 @@
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Drawing.Drawing2D;
 using System.Net;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -11,15 +9,14 @@ namespace DeskBuddy;
 
 /// Nucleul aplicației: o dată pe secundă citește senzorii și îi trimite la DeskBuddy, la 30 s retrimite usage-ul Claude
 /// și caută placa în rețea. Ține iconița din tray și fereastra (MainForm), pe care o creează la prima deschidere.
-sealed class TrayApp : ApplicationContext
+sealed partial class TrayApp
 {
-    enum Health { Starting, Ok, NoDevice, Error }
+    internal enum Health { Starting, Ok, NoDevice, Error }
 
     public AppSettings Settings { get; } = AppSettings.Load();
     public Stats? Latest { get; private set; }                     // ultima citire (pe thread-ul UI)
     public bool Quitting { get; private set; }
     public IReadOnlyList<IPAddress> Targets => wifi.BroadcastTargets;
-    public Icon WindowIcon => (Icon)(currentIcon ?? MakeIcon(Color.Gray)).Clone();
     /// pe thread-ul UI, după fiecare citire (o dată pe secundă)
     public event Action? Updated;
 
@@ -42,18 +39,7 @@ sealed class TrayApp : ApplicationContext
     public string? FpsError => fps.Error;
     public float? Fps { get; private set; }
 
-    readonly NotifyIcon tray;
-    readonly ContextMenuStrip menu = new();
-    readonly ToolStripMenuItem miStats = new() { Enabled = false };
-    readonly ToolStripMenuItem miOpen = new(), miBrowser = new(), miExit = new();
     bool langSynced;                                  // limba plăcii a fost pusă ca a aplicației (o dată pe conexiune)
-
-    void MenuTexts()
-    {
-        miOpen.Text = L.T("Deschide DeskBuddy", "Open DeskBuddy");
-        miBrowser.Text = L.T("Pagina plăcii în browser", "Board page in the browser");
-        miExit.Text = L.T("Ieșire", "Exit");
-    }
 
     /// limba aplicației și a plăcii: salvează, refă fereastra (pe pagina Aplicație) și trimite setarea plăcii
     public void SetLanguage(string code)
@@ -61,16 +47,7 @@ sealed class TrayApp : ApplicationContext
         Settings.Language = code;
         Settings.Save();
         L.En = code == "en";
-        MenuTexts();
-        if (form != null)
-        {
-            bool visible = form.Visible;
-            var old = form;
-            form = null;
-            old.Replacing = true;
-            old.Close();
-            if (visible) { ShowWindow(); form?.ShowAppPage(); }
-        }
+        RebuildWindow();
         langSynced = false;
         _ = SyncBoardLanguageAsync();
     }
@@ -88,7 +65,7 @@ sealed class TrayApp : ApplicationContext
         }
         catch (Exception) { langSynced = false; }             // placa fără răspuns / cu parolă: reîncercăm la următoarea conexiune
     }
-    readonly WindowsFormsSynchronizationContext ui;
+    SynchronizationContext ui = null!;               // pus de partea de platformă (PlatformInit)
     readonly UsbLink usb = new();
     readonly WifiLink wifi = new();
     readonly FpsMonitor fps = new();
@@ -104,14 +81,11 @@ sealed class TrayApp : ApplicationContext
     readonly IDisposable? relay;
     readonly System.Threading.Timer timer;
     readonly EventWaitHandle? showSignal;
-    MainForm? form;
     Sensors? sensors;
     int busy;
     bool fansDumped;                            // fans.txt: ce senzori de ventilatoare găsește aplicația (depanare)
     long usageAt = -60_000, timeAt = -60_000;   // „demult”: prima bifă le face imediat
     Health health = Health.Starting;
-    Icon? currentIcon;
-    bool trayHintShown;
 
     // ------------------------------------------------------------ update-uri (GitHub Releases)
     /// release-ul public: aplicația + firmware-ul public
@@ -141,10 +115,9 @@ sealed class TrayApp : ApplicationContext
     public bool FirmwareUpdateAvailable => FirmwareRelease?.Firmware != null && Board != null &&
         (Board.Version.Length == 0 || Updater.ParseVersion(Board.Version) is not Version v || v < FirmwareRelease.Version);
 
-    readonly System.Windows.Forms.Timer updateTimer = new() { Interval = 60_000 };
+    System.Threading.Timer? updateTimer;
     DateTime nextUpdateCheck = DateTime.Now.AddSeconds(15), nextFirmwareCheck = DateTime.Now.AddSeconds(5);
     string? notifiedKey;
-    bool balloonOpensUpdates;
 
     public TrayApp(bool showWindow, EventWaitHandle? showSignal)
     {
@@ -152,10 +125,7 @@ sealed class TrayApp : ApplicationContext
         UdpSender.HostOverride = Settings.HostIp;
 
         L.En = Settings.LanguageCode == "en";
-        miOpen.Font = new Font(SystemFonts.MenuFont ?? Theme.Body, FontStyle.Bold);
-        MenuTexts();
-        menu.Items.AddRange([miOpen, miBrowser, new ToolStripSeparator(), miStats, new ToolStripSeparator(), miExit]);
-        ui = new WindowsFormsSynchronizationContext();
+        PlatformInit();
         usb.Enabled = Settings.Link != LinkMode.Wifi;
         usb.Changed += () =>
         {
@@ -169,48 +139,15 @@ sealed class TrayApp : ApplicationContext
         needs = new BoardNeeds(usb.Send);             // vremea / imprimanta / login-ul Bambu pentru placa fără WiFi
         usb.Need += needs.Handle;
 
-        tray = new NotifyIcon { ContextMenuStrip = menu, Text = "DeskBuddy", Visible = true };
         SetHealth(Health.Starting, force: true);
-        menu.Opening += (_, _) => miStats.Text = Latest?.Summary() ?? L.T("se citește...", "reading...");
-        tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowWindow(); };
-        miOpen.Click += (_, _) => ShowWindow();
-        miBrowser.Click += (_, _) => Shell(DeviceUrl ?? "http://deskbuddy.local/");
-        miExit.Click += (_, _) => Quit();
-
         ClaudeBridge.FixPathIfMoved();
         Updater.CleanupOld();                         // DeskBuddy.exe.old rămas de la ultimul update
-        tray.BalloonTipClicked += (_, _) =>
-        {
-            if (!balloonOpensUpdates) return;
-            ShowWindow();
-            form?.ShowAppPage();
-        };
-        tray.BalloonTipClosed += (_, _) => balloonOpensUpdates = false;
-        updateTimer.Tick += async (_, _) => await PeriodicChecksAsync();
-        updateTimer.Start();
-        if (showSignal != null)                       // a doua pornire a exe-ului aduce fereastra în față
+        updateTimer = new System.Threading.Timer(_ => ui.Post(async _ => await PeriodicChecksAsync(), null), null, 60_000, 60_000);
+        if (showSignal != null)                       // a doua pornire a aplicației aduce fereastra în față
             new Thread(WaitForShowSignal) { IsBackground = true, Name = "show-signal" }.Start();
 
         timer = new System.Threading.Timer(Tick, null, 200, 1000);
-        if (showWindow) ShowWindow();
-    }
-
-    // ------------------------------------------------------------ fereastra
-    public void ShowWindow()
-    {
-        if (Quitting) return;
-        form ??= new MainForm(this);
-        if (!form.Visible) form.Show();
-        if (form.WindowState == FormWindowState.Minimized) form.WindowState = FormWindowState.Normal;
-        form.Activate();
-        form.BringToFront();
-    }
-
-    public void NotifyHiddenToTray()
-    {
-        if (trayHintShown) return;
-        trayHintShown = true;
-        tray.ShowBalloonTip(3000, "DeskBuddy", L.T("Rulează în continuare în tray. Click pe iconiță deschide fereastra.", "Still running in the tray. Click the icon to open the window."), ToolTipIcon.Info);
+        PlatformStart(showWindow);
     }
 
     void WaitForShowSignal()
@@ -221,6 +158,22 @@ sealed class TrayApp : ApplicationContext
             catch (ObjectDisposedException) { return; }
         }
     }
+
+    void SetHealth(Health h, bool force = false)
+    {
+        if (h == health && !force) return;
+        health = h;
+        OnHealth(h);
+    }
+
+    // ------------------------------------------------------------ ce face fiecare platformă (TrayApp.Windows.cs / TrayApp.Linux.cs)
+    partial void PlatformInit();                      // contextul UI (ui), iconița din tray, meniul
+    partial void PlatformStart(bool showWindow);
+    partial void PlatformQuit();
+    partial void OnHealth(Health h);                  // culoarea punctului din iconiță
+    partial void OnStats(Stats s);                    // tooltip-ul iconiței
+    partial void NotifyUpdate(string title, string text);
+    partial void RebuildWindow();                     // altă limbă: fereastra din nou, pe pagina Aplicație
 
     // ------------------------------------------------------------ acțiuni din fereastră
     public void SetHost(string host)
@@ -469,10 +422,9 @@ sealed class TrayApp : ApplicationContext
         if ((app || fw) && notifiedKey != key)
         {
             notifiedKey = key;
-            balloonOpensUpdates = true;
             string what = app && fw ? L.T("aplicația și firmware-ul plăcii", "the app and the board firmware") : app ? L.T("aplicația", "the app") : L.T("firmware-ul plăcii", "the board firmware");
             var v = app ? Release!.Version : FirmwareRelease!.Version;
-            tray.ShowBalloonTip(8000, $"DeskBuddy {v.ToString(3)}", L.T($"E disponibilă o versiune nouă pentru {what}. Click aici ca s-o instalezi.", $"A new version is available for {what}. Click here to install it."), ToolTipIcon.Info);
+            NotifyUpdate($"DeskBuddy {v.ToString(3)}", L.T($"E disponibilă o versiune nouă pentru {what}. Click aici ca s-o instalezi.", $"A new version is available for {what}. Click here to install it."));
         }
     }
 
@@ -494,7 +446,7 @@ sealed class TrayApp : ApplicationContext
             Updater.InstallApp(zip);
         }
         catch (Exception e) { return L.T("Update eșuat: ", "Update failed: ") + e.Message; }
-        var psi = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, Arguments = "--restarted --show" };
+        var psi = new ProcessStartInfo(Updater.SelfPath) { UseShellExecute = false, Arguments = "--restarted --show" };
         try { Process.Start(psi); }
         catch (Win32Exception e) { return L.T("Instalat, dar nu pot reporni: ", "Installed, but can't restart: ") + e.Message + L.T(". Pornește DeskBuddy din nou.", ". Start DeskBuddy again."); }
         Quit();
@@ -537,27 +489,13 @@ sealed class TrayApp : ApplicationContext
         return (DeviceFirmware.Result.Ok, L.T("Firmware urcat, dar placa n-a răspuns încă după repornire. Verifică peste un minut.", "Firmware uploaded, but the board hasn't answered after the restart yet. Check again in a minute."));
     }
 
-    public void RestartAsAdmin()
-    {
-        bool visible = form?.Visible == true;
-        // cu „Pornește cu Windows” bifat, repornim prin task (admin fără prompt UAC); altfel cerem UAC
-        var psi = Autostart.IsEnabled()
-            ? new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, Arguments = visible ? "--via-task --show" : "--via-task" }
-            : new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = true, Verb = "runas", Arguments = visible ? "--restarted --show" : "--restarted" };
-        try { Process.Start(psi); }
-        catch (Win32Exception) { return; }            // UAC refuzat: rămânem cum suntem
-        Quit();
-    }
-
     public void Quit()
     {
         if (Quitting) return;
         Quitting = true;
         timer.Dispose();
-        updateTimer.Dispose();
-        form?.Close();
-        tray.Visible = false;
-        tray.Dispose();
+        updateTimer?.Dispose();
+        PlatformQuit();
         sensors?.Dispose();
         relay?.Dispose();
         needs.Dispose();
@@ -565,7 +503,6 @@ sealed class TrayApp : ApplicationContext
         wifi.Dispose();
         fps.Dispose();
         media.Dispose();
-        ExitThread();
     }
 
     // ------------------------------------------------------------ bucla de citire (thread separat)
@@ -602,8 +539,7 @@ sealed class TrayApp : ApplicationContext
                 if (Quitting) return;
                 Latest = s;
                 SetHealth(DeviceFound ? Health.Ok : Health.NoDevice);
-                string tip = $"DeskBuddy\n{s.Summary()}";
-                tray.Text = tip.Length > 127 ? tip[..127] : tip;
+                OnStats(s);
                 Updated?.Invoke();
             }, null);
         }
@@ -614,89 +550,4 @@ sealed class TrayApp : ApplicationContext
         finally { Volatile.Write(ref busy, 0); }
     }
 
-    static void Shell(string target)
-    {
-        try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }); }
-        catch (Win32Exception) { }
-    }
-
-    // ------------------------------------------------------------ iconița: un DeskBuddy mic cu ecran, plus un punct de stare
-    void SetHealth(Health h, bool force = false)
-    {
-        if (h == health && !force) return;
-        health = h;
-        var dot = h switch
-        {
-            Health.Ok => Theme.Accent,
-            Health.NoDevice => Theme.Warn,
-            Health.Error => Theme.Bad,
-            _ => Color.FromArgb(150, 150, 150),
-        };
-        var old = currentIcon;
-        currentIcon = MakeIcon(dot);
-        tray.Icon = currentIcon;
-        old?.Dispose();
-    }
-
-    static Icon MakeIcon(Color dot)
-    {
-        using var bmp = new Bitmap(32, 32);
-        using (var g = Graphics.FromImage(bmp)) DrawLogo(g, 32, dot);
-        IntPtr h = bmp.GetHicon();
-        try { return (Icon)Icon.FromHandle(h).Clone(); }
-        finally { DestroyIcon(h); }
-    }
-
-    /// iconița exe-ului (DeskBuddy.ico) = cea din tray cu punctul verde, în toate mărimile Windows, ca PNG-uri într-un .ico
-    ///   DeskBuddy.exe make-icon pc\windows\DeskBuddy\DeskBuddy.ico
-    public static int WriteIco(string path)
-    {
-        int[] sizes = [16, 20, 24, 32, 40, 48, 64, 128, 256];
-        var pngs = sizes.Select(s =>
-        {
-            using var bmp = new Bitmap(s, s);
-            using (var g = Graphics.FromImage(bmp)) DrawLogo(g, s, Theme.Accent);
-            using var ms = new MemoryStream();
-            bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
-            return ms.ToArray();
-        }).ToArray();
-        using var f = new BinaryWriter(File.Create(path));
-        f.Write((ushort)0); f.Write((ushort)1); f.Write((ushort)sizes.Length);          // antet ICO
-        int offset = 6 + 16 * sizes.Length;
-        for (int i = 0; i < sizes.Length; i++)
-        {
-            f.Write((byte)(sizes[i] >= 256 ? 0 : sizes[i])); f.Write((byte)(sizes[i] >= 256 ? 0 : sizes[i]));
-            f.Write((byte)0); f.Write((byte)0); f.Write((ushort)1); f.Write((ushort)32);
-            f.Write(pngs[i].Length); f.Write(offset);
-            offset += pngs[i].Length;
-        }
-        foreach (var p in pngs) f.Write(p);
-        return 0;
-    }
-
-    /// desenat pe o grilă de 32, scalat la mărimea cerută
-    static void DrawLogo(Graphics g, float size, Color dot)
-    {
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        g.ScaleTransform(size / 32f, size / 32f);
-        {
-            using var body = Theme.Rounded(new RectangleF(2, 3, 28, 25), 6);
-            using var bodyBrush = new SolidBrush(Color.FromArgb(235, 238, 240));
-            g.FillPath(bodyBrush, body);
-            using var screen = Theme.Rounded(new RectangleF(5.5f, 7, 21, 14), 3);
-            using var screenBrush = new SolidBrush(Color.FromArgb(25, 30, 36));
-            g.FillPath(screenBrush, screen);
-            using var eye = new SolidBrush(Color.FromArgb(110, 200, 255));
-            g.FillRectangle(eye, 10, 11, 3, 6);
-            g.FillRectangle(eye, 19, 11, 3, 6);
-            using var dotBrush = new SolidBrush(dot);
-            using var ring = new Pen(Color.FromArgb(30, 30, 30), 1.5f);
-            g.FillEllipse(dotBrush, 21, 20, 10, 10);
-            g.DrawEllipse(ring, 21, 20, 10, 10);
-        }
-        g.ResetTransform();
-    }
-
-    [DllImport("user32.dll")]
-    static extern bool DestroyIcon(IntPtr handle);
 }

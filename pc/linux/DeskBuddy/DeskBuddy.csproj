@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- DeskBuddy pentru Linux: aceeași aplicație ca cea de Windows, cu interfața în Avalonia.
+       Logica (legătura cu placa, flash, update-uri, Claude, setări) e comună: fișierele vin din ../../windows/DeskBuddy.
+       Aici stau doar interfața și ce citește din Linux (senzori, jocuri, FPS, muzică, pornire automată).
+       Build:   dotnet publish -c Release -r linux-x64   ->  apoi AppImage (vezi .github/workflows/release.yml)
+       Rulează și pe Windows (pentru testarea interfeței): dotnet run -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>DeskBuddy</AssemblyName>
+    <RootNamespace>DeskBuddy</RootNamespace>
+    <DefineConstants>$(DefineConstants);LINUX_APP</DefineConstants>
+    <Version>2.7.1</Version>
+    <GitHubRepo Condition="'$(GitHubRepo)' == ''"></GitHubRepo>
+    <Product>DeskBuddy</Product>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <BuiltInComInteropSupport>false</BuiltInComInteropSupport>
+    <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
+    <SelfContained Condition="'$(RuntimeIdentifier)' != ''">true</SelfContained>
+    <PublishSingleFile Condition="'$(RuntimeIdentifier)' != ''">true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.23" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.23" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.23" />
+    <PackageReference Include="System.IO.Ports" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AssemblyMetadata Include="GitHubRepo" Value="$(GitHubRepo)" />
+  </ItemGroup>
+
+  <!-- codul comun cu aplicația de Windows -->
+  <ItemGroup>
+    <Compile Include="..\..\windows\DeskBuddy\Lang.cs" Link="Shared\Lang.cs" />
+    <Compile Include="..\..\windows\DeskBuddy\Udp.cs" Link="Shared\Udp.cs" />
+    <Compile Include="..\..\windows\DeskBuddy\WifiLink.cs" Link="Shared\WifiLink.cs" />
+    <Compile Include="..\..\windows\DeskBuddy\UsbLink.cs" Link="Shared\UsbLink.cs" />
+    <Compile Include="..\..\windows\DeskBuddy\BoardNeeds.cs" Link="Shared\BoardNeeds.cs" />
+    <Compile Include="..\..\windows\DeskBuddy\ClaudeBridge.cs" Link="Shared\ClaudeBridge.cs" />
+    <Compile Include="..\..\windows\DeskBuddy\AppSettings.cs" Link="Shared\AppSettings.cs" />
+    <Compile Include="..\..\windows\DeskBuddy\DeviceFirmware.cs" Link="Shared\DeviceFirmware.cs" />
+    <Compile Include="..\..\windows\DeskBuddy\EspFlasher.cs" Link="Shared\EspFlasher.cs" />
+    <Compile Include="..\..\windows\DeskBuddy\Updater.cs" Link="Shared\Updater.cs" />
+    <Compile Include="..\..\windows\DeskBuddy\Stats.cs" Link="Shared\Stats.cs" />
+    <Compile Include="..\..\windows\DeskBuddy\TrayApp.Core.cs" Link="Shared\TrayApp.Core.cs" />
+  </ItemGroup>
+
+</Project>

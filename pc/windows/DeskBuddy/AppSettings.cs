@@ -24,17 +24,35 @@ sealed class AppSettings
     [JsonIgnore]
     public string LanguageCode => Language is "ro" or "en" ? Language : L.DefaultCode;
 
+    /// secretele: DPAPI pe Windows (doar userul ăsta, pe PC-ul ăsta); pe Linux fișierul de setări e citibil doar de utilizator
+    static string Protect(string v) =>
+#if WINDOWS
+        Convert.ToBase64String(ProtectedData.Protect(System.Text.Encoding.UTF8.GetBytes(v), null, DataProtectionScope.CurrentUser));
+#else
+        Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(v));
+#endif
+
+    static string? Unprotect(string v)
+    {
+        try
+        {
+#if WINDOWS
+            return System.Text.Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(v), null, DataProtectionScope.CurrentUser));
+#else
+            return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(v));
+#endif
+        }
+        catch (Exception e) when (e is CryptographicException or FormatException) { return null; }
+    }
+
     [JsonIgnore]
     public string? FirmwareToken
     {
         get
         {
-            if (FirmwareTokenProtected.Length == 0) return null;
-            try { return System.Text.Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(FirmwareTokenProtected), null, DataProtectionScope.CurrentUser)); }
-            catch (Exception e) when (e is CryptographicException or FormatException) { return null; }
+            return FirmwareTokenProtected.Length == 0 ? null : Unprotect(FirmwareTokenProtected);
         }
-        set => FirmwareTokenProtected = string.IsNullOrEmpty(value) ? ""
-            : Convert.ToBase64String(ProtectedData.Protect(System.Text.Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser));
+        set => FirmwareTokenProtected = string.IsNullOrEmpty(value) ? "" : Protect(value);
     }
 
     public string BoardPasswordProtected { get; set; } = "";   // parola paginii plăcii (pentru setări pe WiFi), DPAPI
@@ -44,12 +62,9 @@ sealed class AppSettings
     {
         get
         {
-            if (BoardPasswordProtected.Length == 0) return null;
-            try { return System.Text.Encoding.UTF8.GetString(ProtectedData.Unprotect(Convert.FromBase64String(BoardPasswordProtected), null, DataProtectionScope.CurrentUser)); }
-            catch (Exception e) when (e is CryptographicException or FormatException) { return null; }
+            return BoardPasswordProtected.Length == 0 ? null : Unprotect(BoardPasswordProtected);
         }
-        set => BoardPasswordProtected = string.IsNullOrEmpty(value) ? ""
-            : Convert.ToBase64String(ProtectedData.Protect(System.Text.Encoding.UTF8.GetBytes(value), null, DataProtectionScope.CurrentUser));
+        set => BoardPasswordProtected = string.IsNullOrEmpty(value) ? "" : Protect(value);
     }
 
     [JsonIgnore]
@@ -79,6 +94,7 @@ sealed class AppSettings
         {
             Directory.CreateDirectory(Dir);
             File.WriteAllText(FilePath, JsonSerializer.Serialize(this, Opts));
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(FilePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }

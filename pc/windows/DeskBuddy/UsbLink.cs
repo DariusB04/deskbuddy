@@ -67,10 +67,12 @@ sealed class UsbLink : IDisposable
 
     public UsbLink()
     {
+#if WINDOWS
         Microsoft.Win32.SystemEvents.PowerModeChanged += (_, e) =>
         {
             if (e.Mode == Microsoft.Win32.PowerModes.Resume) { Close(); lock (gate) retryAt.Clear(); }
         };
+#endif
         thread = new Thread(Loop) { IsBackground = true, Name = "usb-link" };
         thread.Start();
     }
@@ -108,6 +110,7 @@ sealed class UsbLink : IDisposable
     /// porturile COM prezente acum care au un cip USB-serial cunoscut (din registry, fără WMI)
     public static List<PortInfo> CandidatePorts()
     {
+        if (!OperatingSystem.IsWindows()) return LinuxPorts();
         var present = new HashSet<string>(SerialPort.GetPortNames(), StringComparer.OrdinalIgnoreCase);
         var list = new List<PortInfo>();
         try
@@ -134,9 +137,37 @@ sealed class UsbLink : IDisposable
     }
 
     /// plăci conectate acum, dar fără driver (deci fără port COM): (cip, pagina driverului)
+    /// Linux: /dev/ttyUSB* și /dev/ttyACM*, cu VID/PID din /sys (urcă din dispozitivul tty până la cel USB)
+    static List<PortInfo> LinuxPorts()
+    {
+        var list = new List<PortInfo>();
+        try
+        {
+            foreach (var dir in Directory.EnumerateDirectories("/sys/class/tty").Where(d => Path.GetFileName(d) is var n && (n.StartsWith("ttyUSB") || n.StartsWith("ttyACM"))))
+            {
+                string? dev;
+                try { dev = new DirectoryInfo(Path.Combine(dir, "device")).ResolveLinkTarget(true)?.FullName ?? Path.Combine(dir, "device"); }
+                catch (IOException) { continue; }
+                for (var d = new DirectoryInfo(dev); d != null; d = d.Parent)
+                {
+                    string vf = Path.Combine(d.FullName, "idVendor"), pf = Path.Combine(d.FullName, "idProduct");
+                    if (!File.Exists(vf) || !File.Exists(pf)) continue;
+                    string id = $"VID_{File.ReadAllText(vf).Trim().ToUpperInvariant()}&PID_{File.ReadAllText(pf).Trim().ToUpperInvariant()}";
+                    var chip = Known.FirstOrDefault(x => x.Id.Equals(id, StringComparison.OrdinalIgnoreCase)).Chip;
+                    if (chip != null) list.Add(new PortInfo("/dev/" + Path.GetFileName(dir), chip));
+                    break;
+                }
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        list.Sort((a, b) => string.CompareOrdinal(a.Name, b.Name));
+        return list;
+    }
+
     public static List<(string Chip, string DriverUrl)> MissingDrivers()
     {
         var list = new List<(string, string)>();
+        if (!OperatingSystem.IsWindows()) return list;   // Linux are driverele în kernel
         try
         {
             using var usb = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Enum\USB");
