@@ -1,7 +1,7 @@
 # DeskBuddy – ESP32 + OLED + LED „sub birou”
 
 Un gadget de birou: ESP32 + ecran OLED 128×64 într-o carcasă printată 3D, ridicată pe 4 picioruțe, cu un LED RGB care luminează biroul de dedesubt.
-Butonul de sus schimbă ecranele: **CEAS** → **VREME** → **PC** → **VENTILATOARE** → **IMPRIMANTA** → **CLAUDE** → **SISTEM** → **MUZICA** (din pagina de setări alegi care apar; în aplicația de Windows le poți și reordona și îți poți face ecrane custom).
+Butonul de sus schimbă ecranele: **CEAS** → **VREME** → **PC** → **VENTILATOARE** → **IMPRIMANTA** → **CLAUDE** → **SISTEM** → **MUZICA** → **COMPANION** → **JOC** (din pagina de setări alegi care apar; în aplicația de Windows le poți și reordona și îți poți face ecrane custom).
 
 - **CEAS**: ora cu cifre „dot-matrix”, data, secundele
 - **VREME**: acum + 3 zile (Open-Meteo, fără cont), după IP sau orașul ales
@@ -11,6 +11,8 @@ Butonul de sus schimbă ecranele: **CEAS** → **VREME** → **PC** → **VENTIL
 - **CLAUDE**: ce face Claude Code acum (lucrează / te așteaptă / gata), usage-ul pe 5 ore și 7 zile, plus „Bit”, un roboțel animat
 - **SISTEM**: ESP32-ul însuși: load pe nucleu, RAM, WiFi
 - **MUZICA**: ce se redă pe PC (Spotify, YouTube, orice player din panoul de volum Windows)
+- **COMPANION**: Bit reacționează la ce faci la PC (joc, Claude, muzică, PC încins, print, noapte) și își face de lucru când nu se întâmplă nimic
+- **JOC**: mini-joc cu un buton: Bit aleargă și sare peste obstacole; recordul rămâne salvat (apăsare lungă = ieși)
 
 Apăsare lungă: LED **AUTO** (slab noaptea) / **MAX** / **OFF**.
 

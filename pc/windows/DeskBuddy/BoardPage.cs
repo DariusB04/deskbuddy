@@ -37,7 +37,7 @@ sealed class BoardPage : Page
     readonly List<ScreenEntry> screens = [];
     List<string> catalog = [];
     int custMax = 24, itemMax = 6;
-    const int Builtins = 8;
+    int Builtins = 8;                       // câte ecrane fixe are placa ("nb"; plăcile vechi nu-l trimit = 8)
     ScreenEntry? idlePick;
     readonly ComboBox rot = Theme.Combo(200), idleMode = Theme.Combo(200), idleMin = Theme.Combo(170);
     readonly CheckBox autoClaude = Theme.Check(L.T("Sari pe CLAUDE când Claude Code începe să lucreze", "Jump to CLAUDE when Claude Code starts working"));
@@ -595,6 +595,7 @@ sealed class BoardPage : Page
         ulong bits = c["modes"] is JsonValue mv && mv.TryGetValue<ulong>(out ulong mb) ? mb : 0xFF;
         catalog = c["citems"]?.AsArray().Select(x => (string?)x ?? "?").ToList() ?? [];
         custMax = I("cmax", 0);
+        Builtins = I("nb", 8);
         itemMax = I("cimax", 6);
         var cust = S("cust").Split(';', StringSplitOptions.RemoveEmptyEntries);
         var all = new List<ScreenEntry>();

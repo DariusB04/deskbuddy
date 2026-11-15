@@ -13,7 +13,7 @@
     <AssemblyName>DeskBuddy</AssemblyName>
     <RootNamespace>DeskBuddy</RootNamespace>
     <DefineConstants>$(DefineConstants);LINUX_APP</DefineConstants>
-    <Version>2.7.1</Version>
+    <Version>2.8.0</Version>
     <GitHubRepo Condition="'$(GitHubRepo)' == ''"></GitHubRepo>
     <Product>DeskBuddy</Product>
     <InvariantGlobalization>true</InvariantGlobalization>

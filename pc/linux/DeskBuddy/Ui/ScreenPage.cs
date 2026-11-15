@@ -14,7 +14,7 @@ sealed class ScreenPage : PageBase
     static readonly string[] LedNames = ["AUTO", "MAX", "OFF"];
     readonly TrayApp app;
     readonly OledView oled = new();
-    readonly Button prev = Ui.Button(L.T("◀  Înapoi", "◀  Back")), next = Ui.Button(L.T("Următorul  ▶", "Next  ▶"), primary: true), led = Ui.Button("LED: ?");
+    readonly Button prev = Ui.Button(L.T("◀  Înapoi", "◀  Back")), next = Ui.Button(L.T("Următorul  ▶", "Next  ▶"), primary: true), led = Ui.Button("LED: ?"), tap = Ui.Button(L.T("Apasă butonul", "Press button"));
     readonly WrapPanel jump = new() { Margin = new Thickness(0, 4, 0, 0) };
     readonly TextBlock info = Ui.Note("");
     readonly List<Button> jumpButtons = [];
@@ -27,20 +27,22 @@ sealed class ScreenPage : PageBase
         this.app = app;
         var c = AddCard(L.T("Placa acum", "The board now"));
         c.Children.Add(oled);
-        c.Children.Add(Ui.Row(prev, next, led));
+        c.Children.Add(Ui.Row(prev, next, tap, led));
         c.Children.Add(Ui.FieldLabel(L.T("Sari direct pe", "Jump straight to")));
         c.Children.Add(jump);
         c.Children.Add(info);
-        c.Children.Add(Ui.Note(L.T("Săgețile ← → și Space schimbă ecranul cât fereastra e deschisă pe pagina asta. „LED” = apăsarea lungă a butonului.", "The ← → arrows and Space change the screen while this page is open. “LED” = a long press of the button.")));
+        c.Children.Add(Ui.Note(L.T("Săgețile ← → schimbă ecranul cât fereastra e deschisă pe pagina asta; Space = butonul apăsat scurt (în JOC sare). „LED” = apăsarea lungă a butonului.", "The ← → arrows change the screen while this page is open; Space = a short press of the button (jumps in GAME). “LED” = a long press of the button.")));
         prev.Click += async (_, _) => await PressAsync(new() { ["a"] = "prev" });
         next.Click += async (_, _) => await PressAsync(new() { ["a"] = "next" });
+        tap.Click += async (_, _) => await PressAsync(new() { ["a"] = "tap" });
         led.Click += async (_, _) => await PressAsync(new() { ["a"] = "led" });
     }
 
     public async void OnKey(KeyEventArgs e)
     {
         if (e.Key == Key.Left) { e.Handled = true; await PressAsync(new() { ["a"] = "prev" }); }
-        else if (e.Key is Key.Right or Key.Space) { e.Handled = true; await PressAsync(new() { ["a"] = "next" }); }
+        else if (e.Key == Key.Right) { e.Handled = true; await PressAsync(new() { ["a"] = "next" }); }
+        else if (e.Key == Key.Space) { e.Handled = true; await PressAsync(new() { ["a"] = "tap" }); }
     }
 
     public override void OnShown()
@@ -118,7 +120,7 @@ sealed class ScreenPage : PageBase
         for (int i = 0; i < jumpButtons.Count; i++) Ui.SetPrimary(jumpButtons[i], i == m);
     }
 
-    void SetButtons(bool on) { prev.IsEnabled = next.IsEnabled = led.IsEnabled = on; foreach (var b in jumpButtons) b.IsEnabled = on; }
+    void SetButtons(bool on) { prev.IsEnabled = next.IsEnabled = led.IsEnabled = tap.IsEnabled = on; foreach (var b in jumpButtons) b.IsEnabled = on; }
 }
 
 /// OLED-ul plăcii, mărit: 128 x 64 de pixeli albaștri, fiecare desenat ca un pătrățel (cu spațiu între ei, ca pe ecranul real)
